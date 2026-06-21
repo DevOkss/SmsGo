@@ -74,6 +74,14 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Sync pubspec version from tag
+        run: |
+          SEMVER="${{ steps.version.outputs.SEMVER }}"
+          BUILD_NUM=$(date +%Y%m%d%H%M)
+          sed -i "s/^version: .*/version: ${SEMVER}+${BUILD_NUM}/" pubspec.yaml
+          echo "Updated pubspec to version ${SEMVER}+${BUILD_NUM}"
+          grep "^version:" pubspec.yaml
+
       - name: Flutter pub get
         run: flutter pub get
 

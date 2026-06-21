@@ -192,7 +192,7 @@ class _AboutSection extends StatelessWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.info_outline_rounded),
-            title: const Text('SmsGo'),
+            title: const Text('Sms Go'),
             subtitle: Text(
               'v$version+$buildNumber'
               '${commitHash != null ? ' ($commitHash)' : ''}',
