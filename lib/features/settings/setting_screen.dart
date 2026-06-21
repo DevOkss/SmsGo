@@ -32,7 +32,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Re-check every time screen is shown (IndexedStack keeps widget alive)
     if (Platform.isAndroid) _checkDefault();
   }
 
@@ -43,7 +42,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _setAsDefault() async {
     await SmsImportGateway.requestDefaultSmsAppForPackage(null);
-    // Wait briefly for role grant, then check
     await Future.delayed(const Duration(seconds: 2));
     final isDefault = await SmsImportGateway.isDefaultSmsApp();
     if (mounted) setState(() => _isDefaultSmsApp = isDefault);
@@ -109,93 +107,93 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('The Settings')),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         children: [
+          // Appearance
           _SectionLabel('Appearance'),
-          AppCard(
-            child: Selector<ThemeProvider, bool>(
-              selector: (_, provider) => provider.isDark,
-              builder: (context, isDark, _) => SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Dark Mode'),
-                subtitle: const Text('Toggle light / dark theme'),
-                secondary: const Icon(Icons.dark_mode_rounded),
-                value: isDark,
-                onChanged: (_) => context.read<ThemeProvider>().toggle(),
-                activeThumbColor: AppColors.primary,
+          Selector<ThemeProvider, bool>(
+            selector: (_, provider) => provider.isDark,
+            builder: (context, isDark, _) => SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Dark Mode'),
+              subtitle: const Text('Toggle light / dark theme'),
+              secondary: Icon(
+                isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                color: AppColors.primary,
               ),
+              value: isDark,
+              onChanged: (_) => context.read<ThemeProvider>().toggle(),
+              activeThumbColor: AppColors.primary,
             ),
           ),
+
           if (Platform.isAndroid) ...[
-            const SizedBox(height: 20),
+            const Divider(height: 1),
+            const SizedBox(height: 16),
             _SectionLabel('SMS'),
-            AppCard(
-              child: Column(
-                children: [
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      _isDefaultSmsApp ? Icons.check_circle_rounded : Icons.chat_bubble_outline_rounded,
-                      color: _isDefaultSmsApp ? AppColors.success : AppColors.darkSubtext,
-                    ),
-                    title: const Text('Default SMS App'),
-                    subtitle: Text(_isDefaultSmsApp ? 'SmsGo is the default SMS app' : 'Not set as default'),
-                    trailing: _isDefaultSmsApp
-                        ? const StatusBadge(label: 'ACTIVE', color: AppColors.success)
-                        : ElevatedButton(
-                            onPressed: _setAsDefault,
-                            child: const Text('Set'),
-                          ),
-                  ),
-                  const Divider(),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.download_rounded),
-                    title: const Text('Import Messages'),
-                    subtitle: const Text('Import SMS from device into conversations'),
-                    trailing: _importing
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : IconButton(
-                            icon: const Icon(Icons.refresh_rounded),
-                            onPressed: _isDefaultSmsApp ? _importMessages : null,
-                            tooltip: _isDefaultSmsApp ? 'Import now' : 'Set as default first',
-                          ),
-                  ),
-                ],
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                _isDefaultSmsApp ? Icons.check_circle_rounded : Icons.chat_bubble_outline_rounded,
+                color: _isDefaultSmsApp ? AppColors.success : AppColors.darkSubtext,
               ),
+              title: const Text('Default SMS App'),
+              subtitle: Text(_isDefaultSmsApp ? 'SmsGo is the default SMS app' : 'Not set as default'),
+              trailing: _isDefaultSmsApp
+                  ? const StatusBadge(label: 'ACTIVE', color: AppColors.success)
+                  : ElevatedButton(
+                      onPressed: _setAsDefault,
+                      child: const Text('Set'),
+                    ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.download_rounded, color: AppColors.primary),
+              title: const Text('Import Messages'),
+              subtitle: const Text('Import SMS from device into conversations'),
+              trailing: _importing
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : IconButton(
+                      icon: const Icon(Icons.refresh_rounded),
+                      onPressed: _isDefaultSmsApp ? _importMessages : null,
+                      tooltip: _isDefaultSmsApp ? 'Import now' : 'Set as default first',
+                    ),
             ),
           ],
-          const SizedBox(height: 20),
+
+          const Divider(height: 1),
+          const SizedBox(height: 16),
           _SectionLabel('DATA MANAGEMENT'),
-          AppCard(
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.delete_sweep_rounded, color: AppColors.error),
-              title: const Text('Delete Campaign Conversations'),
-              subtitle: const Text('Remove all bulk send conversations, sessions, and send logs. Keeps leads and notes.'),
-              onTap: () async {
-                final confirmed = await ConfirmDialog.show(
-                  context,
-                  title: 'Delete campaign data?',
-                  message: 'This will permanently delete all campaign conversations, sending sessions, and send logs. Campaign leads and notes will be preserved. This cannot be undone.',
-                  confirmLabel: 'Delete',
-                  confirmColor: AppColors.error,
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.delete_sweep_rounded, color: AppColors.error),
+            title: const Text('Delete Campaign Data'),
+            subtitle: const Text('Remove all bulk send conversations, sessions, and send logs.'),
+            onTap: () async {
+              final confirmed = await ConfirmDialog.show(
+                context,
+                title: 'Delete campaign data?',
+                message: 'This will permanently delete all campaign conversations, sending sessions, and send logs. Campaign leads and notes will be preserved. This cannot be undone.',
+                confirmLabel: 'Delete',
+                confirmColor: AppColors.error,
+              );
+              if (!confirmed || !context.mounted) return;
+              final db = await AppDatabase.instance.database;
+              final repo = ConversationRepository(db);
+              await repo.deleteCampaignConversations();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Campaign conversations, sessions, and logs deleted')),
                 );
-                if (!confirmed || !context.mounted) return;
-                final db = await AppDatabase.instance.database;
-                final repo = ConversationRepository(db);
-                await repo.deleteCampaignConversations();
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Campaign conversations, sessions, and logs deleted')),
-                  );
-                }
-              },
-            ),
+              }
+            },
           ),
-          const SizedBox(height: 20),
+
+          const Divider(height: 1),
+          const SizedBox(height: 16),
           _SectionLabel('About'),
           _AboutSection(onCheckUpdates: _checkForUpdates),
         ],
@@ -214,37 +212,33 @@ class _AboutSection extends StatelessWidget {
     final updateProvider = context.watch<UpdateProvider>();
     final version = updateProvider.currentVersion;
 
-    return AppCard(
-      child: Column(
-        children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.info_outline_rounded),
-            title: const Text('SmsGo'),
-            subtitle: Text(
-              'v$version',
-            ),
-          ),
-          const Divider(),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: _UpdateStatusIcon(status: updateProvider.status),
-            title: const Text('Check for Updates'),
-            subtitle: Text(_updateStatusText(updateProvider)),
-            trailing: updateProvider.isChecking
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : IconButton(
-                    icon: const Icon(Icons.refresh_rounded),
-                    onPressed: onCheckUpdates,
-                    tooltip: 'Check now',
-                  ),
-          ),
-        ],
-      ),
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.info_outline_rounded, color: AppColors.primary),
+          title: const Text('SmsGo'),
+          subtitle: Text('v$version'),
+        ),
+        const Divider(height: 1),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: _UpdateStatusIcon(status: updateProvider.status),
+          title: const Text('Check for Updates'),
+          subtitle: Text(_updateStatusText(updateProvider)),
+          trailing: updateProvider.isChecking
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.refresh_rounded),
+                  onPressed: onCheckUpdates,
+                  tooltip: 'Check now',
+                ),
+        ),
+      ],
     );
   }
 
@@ -306,7 +300,7 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8, left: 2),
+      padding: const EdgeInsets.only(bottom: 6, left: 2),
       child: Text(text.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall),
     );

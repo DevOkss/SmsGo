@@ -226,8 +226,14 @@ class _SessionProgressCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final progress = session.total > 0 ? session.dispatched / session.total : 0.0;
     final remaining = (session.total - session.dispatched).clamp(0, 1 << 60);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return AppCard(
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : AppColors.lightCard,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -326,12 +332,12 @@ class _SessionProgressCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           ClipRRect(
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(3),
             child: LinearProgressIndicator(
               value: progress,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+              backgroundColor: AppColors.primary.withValues(alpha: 0.1),
               valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-              minHeight: 6,
+              minHeight: 4,
             ),
           ),
           const SizedBox(height: 4),

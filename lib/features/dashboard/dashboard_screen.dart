@@ -45,7 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return RefreshIndicator(
             onRefresh: provider.load,
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               children: [
                 _StatsRow(
                   campaigns: provider.totalCampaigns,
@@ -54,18 +54,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 20),
                 const _DeviceSimStatusSection(),
-                const SizedBox(height: 18),
                 if (provider.activeSessions.isNotEmpty) ...[
+                  const SizedBox(height: 20),
                   const SectionHeader(title: 'Active Sendings'),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   ...provider.activeSessions.map((s) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.only(bottom: 10),
                     child: _ActiveSessionCard(session: s, dispatchedCount: provider.dispatchedCounts[s.id] ?? 0),
                   )),
-                  const SizedBox(height: 8),
                 ],
+                const SizedBox(height: 20),
                 const SectionHeader(title: 'Campaigns'),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 if (provider.campaigns.isEmpty)
                   const EmptyState(
                     icon: Icons.campaign_outlined,
@@ -74,8 +74,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   )
                 else
                   ...provider.campaigns.take(5).map((c) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _CampaignSummaryCard(campaign: c),
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _CampaignSummaryTile(campaign: c),
                   )),
               ],
             ),
@@ -97,35 +97,41 @@ class _StatsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: _StatCard(label: 'Campaigns', value: '$campaigns', icon: Icons.campaign_rounded, color: AppColors.primary)),
-        const SizedBox(width: 10),
-        Expanded(child: _StatCard(label: 'Total Sent', value: '$sent', icon: Icons.send_rounded, color: AppColors.accent)),
-        const SizedBox(width: 10),
-        Expanded(child: _StatCard(label: 'Active', value: '$active', icon: Icons.play_circle_outline_rounded, color: AppColors.warning)),
+        Expanded(child: _StatItem(label: 'Campaigns', value: '$campaigns', icon: Icons.campaign_rounded, color: AppColors.primary)),
+        const SizedBox(width: 8),
+        Expanded(child: _StatItem(label: 'Total Sent', value: '$sent', icon: Icons.send_rounded, color: AppColors.success)),
+        const SizedBox(width: 8),
+        Expanded(child: _StatItem(label: 'Active', value: '$active', icon: Icons.play_circle_outline_rounded, color: AppColors.warning)),
       ],
     );
   }
 }
 
-class _StatCard extends StatelessWidget {
+class _StatItem extends StatelessWidget {
   final String label;
   final String value;
   final IconData icon;
   final Color color;
 
-  const _StatCard({required this.label, required this.value, required this.icon, required this.color});
+  const _StatItem({required this.label, required this.value, required this.icon, required this.color});
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
-      padding: const EdgeInsets.all(14),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : AppColors.lightCard,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 20),
+          Icon(icon, color: color, size: 18),
           const SizedBox(height: 8),
           Text(value,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: color)),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: color)),
+          const SizedBox(height: 2),
           Text(label, style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
@@ -141,7 +147,13 @@ class _ActiveSessionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : AppColors.lightCard,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -157,10 +169,11 @@ class _ActiveSessionCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text('${session.simSlot} · ${session.targetNetwork}',
                       style: Theme.of(context).textTheme.bodySmall),
-                    const SizedBox(height: 6),
-                    Text('Monitor: ${session.monitorNumber ?? 'None'}',
-                      style: Theme.of(context).textTheme.bodySmall),
-
+                    if (session.monitorNumber != null && session.monitorNumber!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text('Monitor: ${session.monitorNumber}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    ],
                   ],
                 ),
               ),
@@ -181,7 +194,7 @@ class _ActiveSessionCard extends StatelessWidget {
                   if (session.running || session.paused) ...[
                     const SizedBox(width: 8),
                     IconButton(
-                      icon: const Icon(Icons.stop_circle_rounded, color: AppColors.error),
+                      icon: const Icon(Icons.stop_circle_rounded, color: AppColors.error, size: 20),
                       onPressed: () => context.read<DashboardProvider>().stopSession(session.id!),
                       tooltip: 'Stop',
                       padding: EdgeInsets.zero,
@@ -192,7 +205,7 @@ class _ActiveSessionCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           ProgressRow(
             sent: session.sentCount,
             total: session.totalTargets,
@@ -225,7 +238,6 @@ class _DeviceSimStatusSectionState extends State<_DeviceSimStatusSection> {
   void initState() {
     super.initState();
     _load();
-    // Subscribe to native sim signal updates with throttling (max once per 5s)
     _simSub = SmsService.instance.simStream.listen((update) {
       if (!mounted) return;
       _pendingUpdate = update;
@@ -298,81 +310,105 @@ class _DeviceSimStatusSectionState extends State<_DeviceSimStatusSection> {
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Device SIM Status', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            if (_loading)
-              const Center(child: CircularProgressIndicator())
-            else if (_error != null)
-              Text('Failed to load SIM status: $_error', style: Theme.of(context).textTheme.bodySmall)
-            else if (_sims.isEmpty)
-              const EmptyState(
-                icon: Icons.sim_card_outlined,
-                title: 'No SIM info',
-                subtitle: 'Unable to read SIM information on this device.',
-              )
-            else
-              Column(
-                children: _sims.map((sim) {
-                  final slotIndex = (sim['slotIndex'] ?? sim['slot'] ?? sim['index'] ?? '').toString();
-                  final carrier = (sim['carrier'] ?? '').toString();
-                  final phoneNumber = (sim['phoneNumber'] ?? '').toString();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionHeader(title: 'Device SIM Status'),
+        const SizedBox(height: 10),
+        if (_loading)
+          const Center(child: CircularProgressIndicator())
+        else if (_error != null)
+          Text('Failed to load: $_error', style: Theme.of(context).textTheme.bodySmall)
+        else if (_sims.isEmpty)
+          const EmptyState(
+            icon: Icons.sim_card_outlined,
+            title: 'No SIM info',
+            subtitle: 'Unable to read SIM information.',
+          )
+        else
+          ..._sims.map((sim) {
+            final slotIndex = (sim['slotIndex'] ?? sim['slot'] ?? sim['index'] ?? '').toString();
+            final carrier = (sim['carrier'] ?? '').toString();
+            final phoneNumber = (sim['phoneNumber'] ?? '').toString();
 
+            int? signalDbm;
+            final rawDbm = sim['signalDbm'];
+            if (rawDbm is int) {
+              signalDbm = rawDbm;
+            } else if (rawDbm is num) {
+              signalDbm = rawDbm.toInt();
+            } else if (rawDbm is String) {
+              signalDbm = int.tryParse(rawDbm);
+            }
 
-                  int? signalDbm;
-                  final rawDbm = sim['signalDbm'];
-                  if (rawDbm is int) {
-                    signalDbm = rawDbm;
-                  } else if (rawDbm is num) {
-                    signalDbm = rawDbm.toInt();
-                  } else if (rawDbm is String) {
-                    signalDbm = int.tryParse(rawDbm);
-                  }
+            int? signalAsu;
+            final rawAsu = sim['signalAsu'];
+            if (rawAsu is int) {
+              signalAsu = rawAsu;
+            } else if (rawAsu is num) {
+              signalAsu = rawAsu.toInt();
+            } else if (rawAsu is String) {
+              signalAsu = int.tryParse(rawAsu);
+            }
 
-                  int? signalAsu;
-                  final rawAsu = sim['signalAsu'];
-                  if (rawAsu is int) {
-                    signalAsu = rawAsu;
-                  } else if (rawAsu is num) {
-                    signalAsu = rawAsu.toInt();
-                  } else if (rawAsu is String) {
-                    signalAsu = int.tryParse(rawAsu);
-                  }
+            final signal = <String, dynamic>{
+              'signalDbm': signalDbm,
+              'signalAsu': signalAsu,
+            };
 
-                  final signal = <String, dynamic>{
-                    'signalDbm': signalDbm,
-                    'signalAsu': signalAsu,
-                  };
-
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: AppCard(
-                      padding: const EdgeInsets.all(12),
-                      color: Theme.of(context).cardColor,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('SIM $slotIndex', style: Theme.of(context).textTheme.titleSmall),
-                          const SizedBox(height: 4),
-                          Text('Carrier: ${carrier.isEmpty ? 'Unknown' : carrier}', style: Theme.of(context).textTheme.bodySmall),
-                          const SizedBox(height: 4),
-                          Text('Number: ${phoneNumber.isEmpty ? 'Unknown' : phoneNumber}', style: Theme.of(context).textTheme.bodySmall),
-                          const SizedBox(height: 10),
-                          _SignalBars(signal),
-                        ],
-                      ),
-                    ),
-                  );
-
-                }).toList(),
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _SimTile(
+                slotIndex: slotIndex,
+                carrier: carrier,
+                phoneNumber: phoneNumber,
+                signal: signal,
               ),
-          ],
-        ),
+            );
+          }),
+      ],
+    );
+  }
+}
+
+class _SimTile extends StatelessWidget {
+  final String slotIndex;
+  final String carrier;
+  final String phoneNumber;
+  final Map<String, dynamic> signal;
+
+  const _SimTile({
+    required this.slotIndex,
+    required this.carrier,
+    required this.phoneNumber,
+    required this.signal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : AppColors.lightCard,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.sim_card_rounded, size: 20, color: AppColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('SIM $slotIndex', style: Theme.of(context).textTheme.titleSmall),
+                Text('Carrier: ${carrier.isEmpty ? 'Unknown' : carrier}', style: Theme.of(context).textTheme.bodySmall),
+                Text('Number: ${phoneNumber.isEmpty ? 'Unknown' : phoneNumber}', style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+          _SignalBars(signal),
+        ],
       ),
     );
   }
@@ -384,37 +420,24 @@ class _SignalBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Native provides:
-    // signalDbm: int? (preferred)
-    // signalAsu: int? (fallback)
-      int? dbm;
-final m = signal is Map ? (signal as Map<dynamic, dynamic>?) : null;
-if (m != null) {
+    int? dbm;
+    final m = signal is Map ? (signal as Map<dynamic, dynamic>?) : null;
+    if (m != null) {
       final dbmObj = (m as Map<dynamic, dynamic>?)?['signalDbm'];
       if (dbmObj is int) dbm = dbmObj;
     }
-    // ignore analyzer for index access; runtime-safe due to type checks above
-
-
 
     if (dbm == null) {
       int? asu;
       if (signal is Map) {
-final maybeAsuObj = (signal as Map<dynamic, dynamic>?)?['signalAsu'];
+        final maybeAsuObj = (signal as Map<dynamic, dynamic>?)?['signalAsu'];
         if (maybeAsuObj is int) asu = maybeAsuObj;
       }
-
-
-
-      // asu -> dBm approximation: dBm = -113 + 2*asu (for GSM asu)
       if (asu != null) {
         dbm = -113 + (2 * asu);
       }
     }
 
-
-    // Typical approximation bands for dBm.
-    // If dBm isn't available, we compute from asu using the existing fallback.
     int bars;
     if (dbm == null) {
       bars = 0;
@@ -428,77 +451,72 @@ final maybeAsuObj = (signal as Map<dynamic, dynamic>?)?['signalAsu'];
       bars = 0;
     }
 
-
     Color barColor(int index) {
-      // index: 0..2 (left->right). Use primary when active.
-      return index < bars ? AppColors.success : AppColors.darkSubtext;
+      return index < bars ? AppColors.success : AppColors.darkSubtext.withValues(alpha: 0.3);
     }
 
-    Widget bar(int index) {
-      return Expanded(
-        child: Container(
-          height: 18,
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
-            color: barColor(index),
+    return SizedBox(
+      width: 40,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: List.generate(3, (i) => Expanded(
+          child: Container(
+            height: 8.0 + (i * 4),
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(2),
+              color: barColor(i),
+            ),
           ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 0),
-        Row(
-          children: [
-            SizedBox(width: 8, child: Text('', style: Theme.of(context).textTheme.bodySmall)),
-            bar(0),
-            bar(1),
-            bar(2),
-          ],
-        ),
-      ],
+        )),
+      ),
     );
   }
 }
 
-class _CampaignSummaryCard extends StatelessWidget {
+class _CampaignSummaryTile extends StatelessWidget {
   final Campaign campaign;
 
-
-  const _CampaignSummaryCard({required this.campaign});
+  const _CampaignSummaryTile({required this.campaign});
 
   @override
   Widget build(BuildContext context) {
     final pct = campaign.totalLeads > 0
         ? (campaign.sentCount / campaign.totalLeads * 100).toStringAsFixed(0)
         : '0';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return AppCard(
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(campaign.name, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text('${campaign.sentCount} / ${campaign.totalLeads} sent',
-                  style: Theme.of(context).textTheme.bodySmall),
-              ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkCard : AppColors.lightCard,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(campaign.name, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 2),
+                  Text('${campaign.sentCount} / ${campaign.totalLeads} sent',
+                    style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
             ),
-          ),
-          Text('$pct%',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: campaign.totalLeads > 0 && campaign.sentCount >= campaign.totalLeads
-                  ? AppColors.success
-                  : AppColors.primary,
-            )),
-        ],
+            Text('$pct%',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: campaign.totalLeads > 0 && campaign.sentCount >= campaign.totalLeads
+                    ? AppColors.success
+                    : AppColors.primary,
+              )),
+          ],
+        ),
       ),
     );
   }

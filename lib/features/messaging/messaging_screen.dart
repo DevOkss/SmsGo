@@ -147,9 +147,15 @@ class _MessagingScreenState extends State<MessagingScreen> {
                   final campaignSessions = sessionsByCampaign[campaign.id!] ?? [];
                   final campaignUnread = campaignSessions.fold<int>(0, (sum, s) => sum + s.unreadCount);
 
+                  final isDark = Theme.of(context).brightness == Brightness.dark;
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: AppCard(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: isDark ? AppColors.darkCard : AppColors.lightCard,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -260,12 +266,14 @@ class _SessionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.03),
+        color: isDark
+            ? AppColors.primary.withValues(alpha: 0.06)
+            : AppColors.primary.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -17,17 +17,20 @@ class AppCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final card = Card(
-      color: color,
-      child: Padding(
-        padding: padding ?? const EdgeInsets.all(16),
-        child: child,
-      ),
+    final card = Container(
+      padding: padding ?? const EdgeInsets.all(14),
+      decoration: color != null
+          ? BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(12),
+            )
+          : null,
+      child: child,
     );
     if (onTap != null) {
       return InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         child: card,
       );
     }
@@ -44,18 +47,18 @@ class StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(6),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(
         label,
         style: TextStyle(
           color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.3,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.4,
         ),
       ),
     );
@@ -93,7 +96,7 @@ class SectionHeader extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
         if (trailing != null) trailing!,
       ],
     );
@@ -122,16 +125,16 @@ class EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 56, color: AppColors.primary.withOpacity(0.4)),
-            const SizedBox(height: 16),
+            Icon(icon, size: 48, color: AppColors.primary.withValues(alpha: 0.3)),
+            const SizedBox(height: 14),
             Text(title,
               style: Theme.of(context).textTheme.titleMedium,
               textAlign: TextAlign.center),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(subtitle,
               style: Theme.of(context).textTheme.bodySmall,
               textAlign: TextAlign.center),
-            if (action != null) ...[const SizedBox(height: 20), action!],
+            if (action != null) ...[const SizedBox(height: 18), action!],
           ],
         ),
       ),
@@ -160,17 +163,17 @@ class ProgressRow extends StatelessWidget {
             Text('$sent / $total sent', style: Theme.of(context).textTheme.bodySmall),
             if (failed > 0)
               Text('$failed failed',
-                style: const TextStyle(color: AppColors.error, fontSize: 12)),
+                style: const TextStyle(color: AppColors.error, fontSize: 11)),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 5),
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(3),
           child: LinearProgressIndicator(
             value: progress,
-            backgroundColor: AppColors.primary.withOpacity(0.15),
+            backgroundColor: AppColors.primary.withValues(alpha: 0.1),
             valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-            minHeight: 6,
+            minHeight: 4,
           ),
         ),
       ],
@@ -201,7 +204,7 @@ class AppChipGroup extends StatelessWidget {
           label: Text(opt),
           selected: isSelected,
           onSelected: (_) => onSelected(opt),
-          selectedColor: AppColors.primary.withOpacity(0.2),
+          selectedColor: AppColors.primary.withValues(alpha: 0.15),
           labelStyle: TextStyle(
             color: isSelected ? AppColors.primary : null,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,

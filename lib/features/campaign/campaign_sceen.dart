@@ -437,9 +437,17 @@ class _CampaignCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return InkWell(
       onTap: onTap,
-      child: Column(
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkCard : AppColors.lightCard,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -495,6 +503,7 @@ class _CampaignCard extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
+        ),
       ),
     );
   }
@@ -585,55 +594,66 @@ class _CampaignDetailScreenState extends State<CampaignDetailScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Overview', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                ProgressRow(sent: c.sentCount, total: c.totalLeads, failed: c.failedCount),
-                const SizedBox(height: 4),
-                if (c.totalLeads > 0)
-                  Text('${(c.progress * 100).toStringAsFixed(0)}% complete',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.primary)),
-                const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(child: _Stat('Total Leads', '${c.totalLeads}')),
-                  Expanded(child: _Stat('Contacted', '${c.sentCount}', color: AppColors.success)),
-                  Expanded(child: _Stat('Failed', '${c.failedCount}', color: AppColors.error)),
-                  Expanded(child: _Stat('Pending', '${c.totalLeads - c.sentCount}')),
-                ]),
-              ],
-            ),
+          _DetailSection(
+            title: 'Overview',
+            children: [
+              ProgressRow(sent: c.sentCount, total: c.totalLeads, failed: c.failedCount),
+              const SizedBox(height: 4),
+              if (c.totalLeads > 0)
+                Text('${(c.progress * 100).toStringAsFixed(0)}% complete',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.primary)),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: _Stat('Total Leads', '${c.totalLeads}')),
+                Expanded(child: _Stat('Contacted', '${c.sentCount}', color: AppColors.success)),
+                Expanded(child: _Stat('Failed', '${c.failedCount}', color: AppColors.error)),
+                Expanded(child: _Stat('Pending', '${c.totalLeads - c.sentCount}')),
+              ]),
+            ],
           ),
           const SizedBox(height: 16),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Leads by Network', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                if (_loading)
-                  const Center(child: CircularProgressIndicator())
-                else if (_networkCounts.isEmpty)
-                  Text('No leads imported yet', style: Theme.of(context).textTheme.bodySmall)
-                else
-                  ..._networkCounts.entries.map((e) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        NetworkBadge(network: e.key),
-                        const SizedBox(width: 10),
-                        Text('${e.value} numbers',
-                          style: Theme.of(context).textTheme.bodyMedium),
-                      ],
-                    ),
-                  )),
-              ],
-            ),
+          _DetailSection(
+            title: 'Leads by Network',
+            children: [
+              if (_loading)
+                const Center(child: CircularProgressIndicator())
+              else if (_networkCounts.isEmpty)
+                Text('No leads imported yet', style: Theme.of(context).textTheme.bodySmall)
+              else
+                ..._networkCounts.entries.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      NetworkBadge(network: e.key),
+                      const SizedBox(width: 10),
+                      Text('${e.value} numbers',
+                        style: Theme.of(context).textTheme.bodyMedium),
+                    ],
+                  ),
+                )),
+            ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DetailSection extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _DetailSection({required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 10),
+        ...children,
+      ],
     );
   }
 }
