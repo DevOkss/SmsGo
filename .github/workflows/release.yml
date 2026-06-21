@@ -77,7 +77,9 @@ jobs:
       - name: Sync pubspec version from tag
         run: |
           SEMVER="${{ steps.version.outputs.SEMVER }}"
-          BUILD_NUM=$(date +%Y%m%d%H%M)
+          # Derive build number from semver: 1.0.2 -> 10002 (fits 32-bit int)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
+          BUILD_NUM=$(( ${MAJOR:-0} * 10000 + ${MINOR:-0} * 100 + ${PATCH:-0} ))
           sed -i "s/^version: .*/version: ${SEMVER}+${BUILD_NUM}/" pubspec.yaml
           echo "Updated pubspec to version ${SEMVER}+${BUILD_NUM}"
           grep "^version:" pubspec.yaml
