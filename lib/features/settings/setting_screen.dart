@@ -194,7 +194,7 @@ class _AboutSection extends StatelessWidget {
             leading: const Icon(Icons.info_outline_rounded),
             title: const Text('Sms Go'),
             subtitle: Text(
-              'v$version+$buildNumber'
+              'v$version'
               '${commitHash != null ? ' ($commitHash)' : ''}',
             ),
           ),
