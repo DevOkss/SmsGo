@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 class Migrations {
-  static const int currentVersion = 18;
+  static const int currentVersion = 19;
 
 
 
@@ -143,6 +143,11 @@ class Migrations {
     // v18: normalize network 'Dito' -> 'DITO'
     if (oldVersion < 18) {
       await db.execute("UPDATE leads SET network = 'DITO' WHERE network = 'Dito'");
+    }
+
+    // v19: add performance indexes for hot paths
+    if (oldVersion < 19) {
+      await _createPerformanceIndexes(db);
     }
   }
 
@@ -311,6 +316,26 @@ class Migrations {
     await db.execute('CREATE INDEX idx_leads_network ON leads(network)');
     await db.execute('CREATE INDEX idx_logs_session ON send_logs(session_id)');
     await db.execute('CREATE INDEX idx_replies_phone ON replies(phone_number)');
+    await _createPerformanceIndexes(db);
+  }
+
+  static Future<void> _createPerformanceIndexes(Database db) async {
+    // Leads: composite indexes for filtering by campaign + status
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_leads_campaign_sent ON leads(campaign_id, sent)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_leads_campaign_network ON leads(campaign_id, network)');
+
+    // Conversations: composite indexes for common queries
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_conv_campaign_phone ON conversations(campaign_id, phone_number)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_conv_session_unread ON conversations(session_id, unread)');
+
+    // Conversation messages: composite index for status subqueries
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_msg_conv_dir_created ON conversation_messages(conversation_id, direction, created_at)');
+
+    // Notes: index for group queries
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_notes_group ON notes(group_name)');
+
+    // Sending sessions: index for campaign lookups
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sending_sessions(campaign_id)');
   }
 
   /// Normalize all phone numbers in conversations table and merge duplicates.

@@ -71,6 +71,7 @@ class MessagingProvider extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>>? _incomingSub;
   StreamSubscription<void>? _convChangeSub;
   Timer? _countdownTicker;
+  Timer? _debounceTimer;
 
   List<ActiveSend> _active = [];
   List<ActiveSend> get active => _active;
@@ -105,35 +106,53 @@ class MessagingProvider extends ChangeNotifier {
   Future<void> loadActiveSessions() async {
     try {
       final sessions = await _sessionRepo.getActive();
-      // Fetch campaign names via direct DB query
       final db = await AppDatabase.instance.database;
       final convRepo = ConversationRepository(db);
+
+      // Batch fetch campaign names (single query instead of N)
       final Map<int, String> campaignNames = {};
-      for (final s in sessions) {
-        if (!campaignNames.containsKey(s.campaignId)) {
-          final rows = await db.query('campaigns',
-            columns: ['name'],
-            where: 'id = ?',
-            whereArgs: [s.campaignId],
-            limit: 1,
-          );
-          campaignNames[s.campaignId] = rows.isNotEmpty ? (rows.first['name'] as String? ?? 'Campaign #${s.campaignId}') : 'Campaign #${s.campaignId}';
+      final campaignIds = sessions.map((s) => s.campaignId).toSet().toList();
+      if (campaignIds.isNotEmpty) {
+        final placeholders = campaignIds.map((_) => '?').join(',');
+        final campRows = await db.query('campaigns',
+          columns: ['id', 'name'],
+          where: 'id IN ($placeholders)',
+          whereArgs: campaignIds,
+        );
+        for (final row in campRows) {
+          campaignNames[row['id'] as int] = row['name'] as String? ?? '';
         }
       }
 
-      // Query actual dispatched counts from conversation_messages for each session
+      // Batch fetch dispatched counts (single query instead of N)
       final Map<int, int> dispatchedCounts = {};
-      // Query unread counts per session
-      final Map<int, int> unreadCounts = {};
-      for (final s in sessions) {
-        if (s.id == null) continue;
+      final sessionIds = sessions.where((s) => s.id != null).map((s) => s.id!).toList();
+      if (sessionIds.isNotEmpty) {
+        final placeholders = sessionIds.map((_) => '?').join(',');
         final countRows = await db.rawQuery('''
-          SELECT COUNT(*) as cnt
-          FROM conversation_messages cm
-          WHERE cm.session_id = ? AND cm.direction = 'out'
-        ''', [s.id]);
-        dispatchedCounts[s.id!] = countRows.isNotEmpty ? (countRows.first['cnt'] as int? ?? 0) : 0;
-        unreadCounts[s.id!] = await convRepo.getUnreadCountForSession(s.id!);
+          SELECT session_id, COUNT(*) as cnt
+          FROM conversation_messages
+          WHERE session_id IN ($placeholders) AND direction = 'out'
+          GROUP BY session_id
+        ''', sessionIds);
+        for (final row in countRows) {
+          dispatchedCounts[row['session_id'] as int] = row['cnt'] as int? ?? 0;
+        }
+      }
+
+      // Batch fetch unread counts (single query instead of N)
+      final Map<int, int> unreadCounts = {};
+      if (sessionIds.isNotEmpty) {
+        final placeholders = sessionIds.map((_) => '?').join(',');
+        final unreadRows = await db.rawQuery('''
+          SELECT session_id, COUNT(*) as cnt
+          FROM conversations
+          WHERE session_id IN ($placeholders) AND unread = 1
+          GROUP BY session_id
+        ''', sessionIds);
+        for (final row in unreadRows) {
+          unreadCounts[row['session_id'] as int] = row['cnt'] as int? ?? 0;
+        }
       }
 
       // Query imported unread count
@@ -428,20 +447,28 @@ class MessagingProvider extends ChangeNotifier {
 
   void _listenForIncoming() {
     _incomingSub = _sms.incomingEvents.listen((_) {
-      // Refresh unread counts when a new incoming reply arrives
-      loadActiveSessions();
+      // Debounce: refresh unread counts when a new incoming reply arrives
+      _debouncedLoadSessions();
     });
   }
 
   void _listenForConvChanges() {
     _convChangeSub = ConversationRepository.onChange.listen((_) {
-      // Refresh badge counts when read/unread status or ownership changes
+      // Debounce: refresh badge counts when read/unread status or ownership changes
+      _debouncedLoadSessions();
+    });
+  }
+
+  void _debouncedLoadSessions() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
       loadActiveSessions();
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _sendSub?.cancel();
     _incomingSub?.cancel();
     _convChangeSub?.cancel();

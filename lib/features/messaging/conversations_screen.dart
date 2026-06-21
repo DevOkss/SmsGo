@@ -27,24 +27,32 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   int _unreadCount = 0;
   bool _selectMode = false;
   final Set<int> _selectedIds = {};
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Subscribe to real-time incoming SMS events
+    // Subscribe to real-time incoming SMS events with debounce
     _incomingSub = SmsService.instance.incomingEvents.listen((_) {
-      if (mounted) _load();
+      _debouncedLoad();
     });
-    // Subscribe to send results for realtime status updates
-    // Listen to SmsService.sendEvents (fires after DB update) instead of raw SmsGateway.sendResults
+    // Subscribe to send results for realtime status updates with debounce
     _sendResultSub = SmsService.instance.sendEvents.listen((_) {
+      _debouncedLoad();
+    });
+  }
+
+  void _debouncedLoad() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
       if (mounted) _load();
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchCtrl.dispose();
     _incomingSub?.cancel();
     _sendResultSub?.cancel();

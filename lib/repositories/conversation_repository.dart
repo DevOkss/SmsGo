@@ -228,10 +228,31 @@ class ConversationRepository {
   }
 
   /// Batch helper for building conversation list UI.
+  /// Uses a single grouped query instead of N individual queries.
   Future<Map<int, String?>> getLatestOutgoingStatusesForConversations(List<int> conversationIds) async {
+    if (conversationIds.isEmpty) return {};
     final result = <int, String?>{};
+    // Initialize all IDs with null (in case they have no outgoing messages)
     for (final id in conversationIds) {
-      result[id] = await getLatestOutgoingStatusForConversation(id);
+      result[id] = null;
+    }
+    // Single query using IN clause and GROUP BY
+    final placeholders = conversationIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT cm.conversation_id, cm.status
+      FROM conversation_messages cm
+      INNER JOIN (
+        SELECT conversation_id, MAX(created_at) as max_created
+        FROM conversation_messages
+        WHERE conversation_id IN ($placeholders) AND direction = 'out'
+        GROUP BY conversation_id
+      ) latest ON cm.conversation_id = latest.conversation_id
+        AND cm.created_at = latest.max_created
+        AND cm.direction = 'out'
+    ''', conversationIds);
+    for (final row in rows) {
+      final convId = row['conversation_id'] as int;
+      result[convId] = row['status'] as String?;
     }
     return result;
   }

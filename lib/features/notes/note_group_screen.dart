@@ -6,14 +6,15 @@ import '../../models/note.dart';
 import '../../providers/notes_provider.dart';
 
 class _HighlightEditingController extends TextEditingController {
+  static final _usernamePattern = RegExp(r'\{username\}');
+
   @override
   TextSpan buildTextSpan({required BuildContext context, TextStyle? style, required bool withComposing}) {
     final textValue = text;
     final spans = <TextSpan>[];
-    final pattern = RegExp(r'\{username\}');
     int lastEnd = 0;
 
-    for (final match in pattern.allMatches(textValue)) {
+    for (final match in _usernamePattern.allMatches(textValue)) {
       if (match.start > lastEnd) {
         spans.add(TextSpan(text: textValue.substring(lastEnd, match.start)));
       }
@@ -48,6 +49,12 @@ class NoteGroupScreen extends StatefulWidget {
 }
 
 class _NoteGroupScreenState extends State<NoteGroupScreen> {
+  static final _linkPattern = RegExp(
+    r'(https?://[^\s]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)',
+    caseSensitive: false,
+  );
+  static final _blockedPattern = RegExp(r'https?://[^\s]+');
+
   @override
   void initState() {
     super.initState();
@@ -227,19 +234,11 @@ class _NoteGroupScreenState extends State<NoteGroupScreen> {
   }
 
   bool _containsLink(String text) {
-    final linkPattern = RegExp(
-      r'(https?://[^\s]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)',
-      caseSensitive: false,
-    );
-    return linkPattern.hasMatch(text);
+    return _linkPattern.hasMatch(text);
   }
 
   bool _containsBlockedLink(String text) {
-    final blockedPattern = RegExp(
-      r'https?://[^\s]+',
-      caseSensitive: false,
-    );
-    return blockedPattern.hasMatch(text);
+    return _blockedPattern.hasMatch(text);
   }
 
   Future<void> _confirmDelete(Note note) async {

@@ -75,6 +75,7 @@ class ActiveSendProvider extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>>? _sendSub;
   StreamSubscription<Map<String, dynamic>>? _incomingSub;
   StreamSubscription<void>? _convChangeSub;
+  Timer? _messagingDebounce;
 
   ActiveSendProvider(this.campaignId, {MessagingProvider? messaging}) : _messaging = messaging {
     loading = true;
@@ -113,38 +114,42 @@ class ActiveSendProvider extends ChangeNotifier {
         orderBy: 'id DESC',
       );
 
+      // Batch fetch counts for all sessions (single query instead of N)
+      final sessionIds = sessRows.map((r) => r['id'] as int).toList();
+      final Map<int, Map<String, int>> sessionCounts = {};
+      if (sessionIds.isNotEmpty) {
+        final placeholders = sessionIds.map((_) => '?').join(',');
+        final countRows = await db.rawQuery('''
+          SELECT session_id, status, COUNT(*) as cnt
+          FROM conversation_messages
+          WHERE session_id IN ($placeholders) AND direction = 'out'
+          GROUP BY session_id, status
+        ''', sessionIds);
+        for (final row in countRows) {
+          final sessId = row['session_id'] as int;
+          final status = row['status'] as String?;
+          final cnt = row['cnt'] as int? ?? 0;
+          sessionCounts.putIfAbsent(sessId, () => {'sent': 0, 'failed': 0, 'dispatched': 0});
+          sessionCounts[sessId]!['dispatched'] = sessionCounts[sessId]!['dispatched']! + cnt;
+          if (status == 'sent') sessionCounts[sessId]!['sent'] = cnt;
+          if (status == 'failed') sessionCounts[sessId]!['failed'] = cnt;
+        }
+      }
+
       sessions = [];
       for (final row in sessRows) {
         final sessId = row['id'] as int;
         final running = row['running'] as int? ?? 1;
         final isPaused = row['paused'] as int? ?? 0;
-
-        // Query actual counts from conversation_messages (sent + failed + sending = dispatched)
-        // Use cm.session_id for per-session accuracy
-        int sentCount = 0;
-        int failedCount = 0;
-        int dispatchedCount = 0;
-        final actualCounts = await db.rawQuery('''
-          SELECT cm.status, COUNT(*) as cnt
-          FROM conversation_messages cm
-          WHERE cm.session_id = ? AND cm.direction = 'out'
-          GROUP BY cm.status
-        ''', [sessId]);
-        for (final r in actualCounts) {
-          final s = r['status'] as String?;
-          final cnt = r['cnt'] as int? ?? 0;
-          dispatchedCount += cnt;
-          if (s == 'sent') sentCount = cnt;
-          if (s == 'failed') failedCount = cnt;
-        }
+        final counts = sessionCounts[sessId] ?? {'sent': 0, 'failed': 0, 'dispatched': 0};
 
         sessions.add(SessionProgress(
           sessionId: sessId,
           simSlot: row['sim_slot'] as String? ?? 'SIM 1',
           monitorNumber: row['monitor_number'] as String?,
-          sent: sentCount,
-          failed: failedCount,
-          dispatched: dispatchedCount,
+          sent: counts['sent']!,
+          failed: counts['failed']!,
+          dispatched: counts['dispatched']!,
           total: row['total_targets'] as int? ?? 0,
           running: running == 1,
           completed: running == 0,
@@ -385,13 +390,10 @@ class ActiveSendProvider extends ChangeNotifier {
   @override
   void dispose() {
     _messaging?.removeListener(_onMessagingChanged);
+    _messagingDebounce?.cancel();
     _sendSub?.cancel();
     _incomingSub?.cancel();
     _convChangeSub?.cancel();
-    for (final t in _restTimers.values) {
-      t.cancel();
-    }
-    _restTimers.clear();
     for (final t in _nextSendTimers.values) {
       t.cancel();
     }
@@ -400,24 +402,27 @@ class ActiveSendProvider extends ChangeNotifier {
   }
 
   void _onMessagingChanged() {
-    // Sync session states from MessagingProvider
-    final m = _messaging;
-    if (m == null) return;
-    for (final sess in sessions) {
-      final match = m.active.where((a) => a.sessionId == sess.sessionId).firstOrNull;
-      if (match == null) {
-        // Session not in active list — stopped or completed from outside
-        if (!sess.completed) {
-          sess.completed = true;
-          sess.running = false;
-          sess.paused = false;
+    // Debounce: avoid cascading rebuilds from MessagingProvider
+    _messagingDebounce?.cancel();
+    _messagingDebounce = Timer(const Duration(milliseconds: 300), () {
+      // Sync session states from MessagingProvider
+      final m = _messaging;
+      if (m == null) return;
+      for (final sess in sessions) {
+        final match = m.active.where((a) => a.sessionId == sess.sessionId).firstOrNull;
+        if (match == null) {
+          if (!sess.completed) {
+            sess.completed = true;
+            sess.running = false;
+            sess.paused = false;
+          }
+        } else {
+          sess.running = match.running;
+          sess.paused = !match.running;
         }
-      } else {
-        sess.running = match.running;
-        sess.paused = !match.running;
       }
-    }
-    notifyListeners();
+      notifyListeners();
+    });
   }
 
   Future<void> loadConversations({bool? replied}) async {

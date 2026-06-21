@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:excel/excel.dart';
+import 'package:flutter/foundation.dart';
 import 'package:csv/csv.dart';
 
 import '../core/constants/app_constants.dart';
@@ -81,7 +82,11 @@ class ImportService {
       );
     }
 
-    return _processRows(rows.skip(1).toList(), phoneCol, nameCol, campaignId, onProgress: onProgress);
+    final dataRows = rows.skip(1).toList();
+    if (dataRows.length > 1000) {
+      return compute(_processRowsIsolate, _ProcessRowsParams(dataRows, phoneCol, nameCol, campaignId));
+    }
+    return _processRows(dataRows, phoneCol, nameCol, campaignId, onProgress: onProgress);
   }
 
   static Future<ImportResult> _importExcel(
@@ -119,6 +124,9 @@ class ImportService {
       return row.map(_excelCellText).toList();
     }).toList();
 
+    if (rawRows.length > 1000) {
+      return compute(_processRowsIsolate, _ProcessRowsParams(rawRows, phoneCol, nameCol, campaignId));
+    }
     return _processRows(rawRows, phoneCol, nameCol, campaignId, onProgress: onProgress);
   }
 
@@ -246,4 +254,83 @@ class ImportService {
       AppConstants.networkOthers: 0,
     };
   }
+}
+
+class _ProcessRowsParams {
+  final List<dynamic> rows;
+  final int phoneCol;
+  final int nameCol;
+  final int campaignId;
+
+  _ProcessRowsParams(this.rows, this.phoneCol, this.nameCol, this.campaignId);
+}
+
+ImportResult _processRowsIsolate(_ProcessRowsParams params) {
+  final leads = <Lead>[];
+  final seenPhones = <String>{};
+  final errors = <String>[];
+  int invalid = 0;
+  int total = 0;
+  int fileDuplicates = 0;
+
+  for (int i = 0; i < params.rows.length; i++) {
+    final row = params.rows[i];
+    if (row is List && row.length > params.phoneCol) {
+      if (row.every((v) => v.toString().trim().isEmpty)) continue;
+      total++;
+
+      final rawPhone = row[params.phoneCol].toString().trim();
+      if (rawPhone.isEmpty) {
+        invalid++;
+        if (errors.length < 5) errors.add('Row ${i + 2}: Missing phone number');
+        continue;
+      }
+
+      final phone = PhoneUtils.normalize(rawPhone);
+      if (!PhoneUtils.isValid(rawPhone)) {
+        invalid++;
+        if (errors.length < 5) errors.add('Row ${i + 2}: Invalid number "$rawPhone"');
+        continue;
+      }
+
+      if (seenPhones.contains(phone)) {
+        fileDuplicates++;
+        continue;
+      }
+      seenPhones.add(phone);
+
+      final name = params.nameCol >= 0 && params.nameCol < row.length
+          ? row[params.nameCol].toString().trim()
+          : null;
+
+      final network = PhoneUtils.detectNetwork(phone);
+      leads.add(Lead(
+        campaignId: params.campaignId,
+        name: name?.isEmpty == true ? null : name,
+        phoneNumber: phone,
+        network: network,
+      ));
+    }
+  }
+
+  final counts = <String, int>{
+    AppConstants.networkGlobe: 0,
+    AppConstants.networkSmart: 0,
+    AppConstants.networkDito: 0,
+    AppConstants.networkOthers: 0,
+  };
+  for (final lead in leads) {
+    counts[lead.network] = (counts[lead.network] ?? 0) + 1;
+  }
+
+  return ImportResult(
+    leads: leads,
+    total: total,
+    valid: leads.length,
+    invalid: invalid,
+    fileDuplicates: fileDuplicates,
+    errors: errors,
+    networkCounts: counts,
+    crossCampaignDuplicates: [],
+  );
 }

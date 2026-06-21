@@ -62,64 +62,90 @@ class NativeSmsImportService {
     // Track which conversations have unread incoming messages
     final Map<int, bool> convHasUnread = {};
 
+    // Batch fetch existing conversations for all phone numbers (single query)
+    final normalizedAddresses = <String>[];
+    final originalByNormalized = <String, String>{};
     for (final row in rows) {
       final address = (row['address'] as String? ?? '').trim();
-      final body = (row['body'] as String? ?? '').trim();
-      final type = (row['type'] as String? ?? 'inbox');
-      final nativeDate = row['date'];
-      final nativeRead = row['read'];
+      if (address.isEmpty) continue;
+      final normalized = normalizePhone(address);
+      normalizedAddresses.add(normalized);
+      originalByNormalized[normalized] = address;
+    }
 
-      if (address.isEmpty || body.isEmpty) continue;
-
-      final direction = type == 'sent' ? 'out' : 'in';
-
-      final epochMillis = nativeDate is int
-          ? nativeDate
-          : (nativeDate is double ? nativeDate.toInt() : null);
-      if (epochMillis == null) continue;
-
-      final createdAt = DateTime.fromMillisecondsSinceEpoch(epochMillis).toIso8601String();
-
-      final normalizedAddress = normalizePhone(address);
+    final Map<String, int> existingConversations = {};
+    if (normalizedAddresses.isNotEmpty) {
+      final uniquePhones = normalizedAddresses.toSet().toList();
+      final placeholders = uniquePhones.map((_) => '?').join(',');
       final convRows = await db.query(
         'conversations',
-        where: 'phone_number = ?',
-        whereArgs: [normalizedAddress],
-        orderBy: 'created_at DESC',
-        limit: 1,
+        columns: ['id', 'phone_number'],
+        where: 'phone_number IN ($placeholders)',
+        whereArgs: uniquePhones,
       );
-
-      final leadId = moveToActive ? activeLeadByPhone[address] : null;
-
-      final conversationId = convRows.isNotEmpty
-          ? (convRows.first['id'] as int?)
-          : await convRepo.createConversation(sessionId, normalizedAddress, leadId: leadId);
-
-      if (conversationId == null) continue;
-
-      final dupRows = await db.rawQuery(
-        "SELECT id FROM conversation_messages WHERE conversation_id = ? AND direction = ? AND TRIM(message) = TRIM(?) LIMIT 1",
-        [conversationId, direction, body],
-      );
-
-      if (dupRows.isNotEmpty) continue;
-
-      await convRepo.addMessage(
-        conversationId,
-        direction,
-        body,
-        status: direction == 'out' ? 'sent' : '',
-        createdAt: createdAt,
-      );
-
-      // Track unread: incoming messages where native read == 0 means unread
-      if (direction == 'in') {
-        final isRead = nativeRead is int ? nativeRead == 1 : true;
-        if (!isRead) {
-          convHasUnread[conversationId] = true;
+      for (final cr in convRows) {
+        final phone = cr['phone_number'] as String;
+        final id = cr['id'] as int;
+        if (!existingConversations.containsKey(phone)) {
+          existingConversations[phone] = id;
         }
       }
     }
+
+    // Process all rows in a transaction for better performance
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        final address = (row['address'] as String? ?? '').trim();
+        final body = (row['body'] as String? ?? '').trim();
+        final type = (row['type'] as String? ?? 'inbox');
+        final nativeDate = row['date'];
+        final nativeRead = row['read'];
+
+        if (address.isEmpty || body.isEmpty) continue;
+
+        final direction = type == 'sent' ? 'out' : 'in';
+
+        final epochMillis = nativeDate is int
+            ? nativeDate
+            : (nativeDate is double ? nativeDate.toInt() : null);
+        if (epochMillis == null) continue;
+
+        final createdAt = DateTime.fromMillisecondsSinceEpoch(epochMillis).toIso8601String();
+
+        final normalizedAddress = normalizePhone(address);
+        final leadId = moveToActive ? activeLeadByPhone[address] : null;
+
+        var conversationId = existingConversations[normalizedAddress];
+        if (conversationId == null) {
+          conversationId = await convRepo.createConversation(sessionId, normalizedAddress, leadId: leadId);
+          existingConversations[normalizedAddress] = conversationId;
+        }
+
+        // Check for duplicate message
+        final dupRows = await txn.rawQuery(
+          "SELECT id FROM conversation_messages WHERE conversation_id = ? AND direction = ? AND TRIM(message) = TRIM(?) LIMIT 1",
+          [conversationId, direction, body],
+        );
+
+        if (dupRows.isNotEmpty) continue;
+
+        await convRepo.addMessage(
+          conversationId,
+          direction,
+          body,
+          status: direction == 'out' ? 'sent' : '',
+          createdAt: createdAt,
+        );
+
+        // Track unread: incoming messages where native read == 0 means unread
+        if (direction == 'in') {
+          final isRead = nativeRead is int ? nativeRead == 1 : true;
+          if (!isRead) {
+            convHasUnread[conversationId] = true;
+          }
+        }
+      }
+    });
 
     // Mark conversations with unread incoming messages
     for (final entry in convHasUnread.entries) {

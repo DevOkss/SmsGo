@@ -213,38 +213,59 @@ class _DeviceSimStatusSectionState extends State<_DeviceSimStatusSection> {
   List<Map<String, dynamic>> _sims = const [];
   String? _error;
   StreamSubscription<Map<String, dynamic>>? _simSub;
+  DateTime? _lastSimUpdate;
+  Timer? _throttleTimer;
+  Map<String, dynamic>? _pendingUpdate;
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Subscribe to native sim signal updates and merge into UI state.
+    // Subscribe to native sim signal updates with throttling (max once per 5s)
     _simSub = SmsService.instance.simStream.listen((update) {
       if (!mounted) return;
-      setState(() {
-        try {
-          final subId = update['subscriptionId'];
-          if (subId == null) return;
-          for (var i = 0; i < _sims.length; i++) {
-            final sim = _sims[i];
-            if (sim['subscriptionId'] == subId) {
-              final newSim = Map<String, dynamic>.from(sim);
-              if (update.containsKey('signalDbm')) newSim['signalDbm'] = update['signalDbm'];
-              if (update.containsKey('signalAsu')) newSim['signalAsu'] = update['signalAsu'];
-              _sims = List<Map<String, dynamic>>.from(_sims);
-              _sims[i] = newSim;
-              break;
-            }
+      _pendingUpdate = update;
+      final now = DateTime.now();
+      if (_lastSimUpdate == null || now.difference(_lastSimUpdate!) >= const Duration(seconds: 5)) {
+        _lastSimUpdate = now;
+        _applySimUpdate(_pendingUpdate!);
+      } else {
+        _throttleTimer?.cancel();
+        _throttleTimer = Timer(const Duration(seconds: 5), () {
+          if (mounted && _pendingUpdate != null) {
+            _lastSimUpdate = DateTime.now();
+            _applySimUpdate(_pendingUpdate!);
           }
-        } catch (e) {
-          // ignore
+        });
+      }
+    });
+  }
+
+  void _applySimUpdate(Map<String, dynamic> update) {
+    setState(() {
+      try {
+        final subId = update['subscriptionId'];
+        if (subId == null) return;
+        for (var i = 0; i < _sims.length; i++) {
+          final sim = _sims[i];
+          if (sim['subscriptionId'] == subId) {
+            final newSim = Map<String, dynamic>.from(sim);
+            if (update.containsKey('signalDbm')) newSim['signalDbm'] = update['signalDbm'];
+            if (update.containsKey('signalAsu')) newSim['signalAsu'] = update['signalAsu'];
+            _sims = List<Map<String, dynamic>>.from(_sims);
+            _sims[i] = newSim;
+            break;
+          }
         }
-      });
+      } catch (e) {
+        // ignore
+      }
     });
   }
 
   @override
   void dispose() {
+    _throttleTimer?.cancel();
     _simSub?.cancel();
     super.dispose();
   }

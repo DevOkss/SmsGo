@@ -48,20 +48,28 @@ class DashboardProvider extends ChangeNotifier {
     _activeSessions = _activeSessions.where((s) => !(s.paused)).toList();
     _totalSent = _campaigns.fold(0, (sum, c) => sum + c.sentCount);
 
-    // Query actual dispatched counts per session from conversation_messages
+    // Batch query dispatched counts per session (single query instead of N)
     try {
       final db = await AppDatabase.instance.database;
-      final Map<int, int> counts = {};
-      for (final s in _activeSessions) {
-        if (s.id == null) continue;
+      final sessionIds = _activeSessions
+          .where((s) => s.id != null)
+          .map((s) => s.id!)
+          .toList();
+      if (sessionIds.isNotEmpty) {
+        final placeholders = sessionIds.map((_) => '?').join(',');
         final rows = await db.rawQuery('''
-          SELECT COUNT(*) as cnt
-          FROM conversation_messages cm
-          WHERE cm.session_id = ? AND cm.direction = 'out'
-        ''', [s.id]);
-        counts[s.id!] = rows.isNotEmpty ? (rows.first['cnt'] as int? ?? 0) : 0;
+          SELECT session_id, COUNT(*) as cnt
+          FROM conversation_messages
+          WHERE session_id IN ($placeholders) AND direction = 'out'
+          GROUP BY session_id
+        ''', sessionIds);
+        _dispatchedCounts = {
+          for (final row in rows)
+            (row['session_id'] as int): row['cnt'] as int? ?? 0,
+        };
+      } else {
+        _dispatchedCounts = {};
       }
-      _dispatchedCounts = counts;
     } catch (_) {}
 
     _loading = false;

@@ -386,24 +386,36 @@ class SmsService {
 
     // Create ALL conversations upfront so they appear immediately in the UI
     final conversationMap = <String, int>{}; // phoneNumber -> conversationId
-    for (final lead in targets) {
-      final existingConv = await db.query(
+
+    // Batch fetch existing conversations for this campaign (single query)
+    final phoneNumbers = targets.map((l) => l.phoneNumber).toList();
+    if (phoneNumbers.isNotEmpty) {
+      final placeholders = phoneNumbers.map((_) => '?').join(',');
+      final existingConvs = await db.query(
         'conversations',
-        where: 'campaign_id = ? AND phone_number = ?',
-        whereArgs: [session.campaignId, lead.phoneNumber],
-        limit: 1,
+        columns: ['id', 'phone_number'],
+        where: 'campaign_id = ? AND phone_number IN ($placeholders)',
+        whereArgs: [session.campaignId, ...phoneNumbers],
       );
-      if (existingConv.isNotEmpty) {
-        conversationMap[lead.phoneNumber] = existingConv.first['id'] as int;
-      } else {
-        final convId = await convRepo.createConversation(
-          sessionId,
-          lead.phoneNumber,
-          leadId: lead.id,
-          campaignId: session.campaignId,
-        );
-        conversationMap[lead.phoneNumber] = convId;
+      for (final conv in existingConvs) {
+        conversationMap[conv['phone_number'] as String] = conv['id'] as int;
       }
+    }
+
+    // Batch create missing conversations using a transaction
+    final missingLeads = targets.where((l) => !conversationMap.containsKey(l.phoneNumber)).toList();
+    if (missingLeads.isNotEmpty) {
+      await db.transaction((txn) async {
+        for (final lead in missingLeads) {
+          final convId = await convRepo.createConversation(
+            sessionId,
+            lead.phoneNumber,
+            leadId: lead.id,
+            campaignId: session.campaignId,
+          );
+          conversationMap[lead.phoneNumber] = convId;
+        }
+      });
     }
 
     late void Function() scheduleNext;
@@ -476,9 +488,6 @@ class SmsService {
           "status": "sending",
         });
       } catch (_) {}
-
-      // Give UI time to rebuild and show the hourglass icon before sendSms returns
-      await Future.delayed(const Duration(milliseconds: 250));
 
       bool sendAccepted = false;
       try {

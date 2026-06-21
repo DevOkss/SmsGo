@@ -24,6 +24,7 @@ class AppDatabase {
       onUpgrade: Migrations.onUpgrade,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
+        await db.execute('PRAGMA journal_mode = WAL');
       },
     );
   }

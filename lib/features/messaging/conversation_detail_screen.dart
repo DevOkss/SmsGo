@@ -36,7 +36,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   List<ConversationMessage> _messages = [];
   bool _loading = true;
   bool _sending = false;
-  int? _lastMsgCount;
   bool _showJumpButton = false;
   String _selectedSim = 'SIM 1';
   String _sessionSimSlot = 'SIM 1';
@@ -139,11 +138,14 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   Future<void> _loadMessages() async {
     final msgs = await _repo.getMessagesForConversation(widget.conversation.id!);
     if (!mounted) return;
+    final changed = _messages.length != msgs.length;
     setState(() {
       _messages = msgs;
       _loading = false;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    if (changed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
   }
 
   @override
@@ -232,11 +234,6 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_lastMsgCount == null || _lastMsgCount != _messages.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      _lastMsgCount = _messages.length;
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Column(
