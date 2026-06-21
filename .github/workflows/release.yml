@@ -1,0 +1,151 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v1.1.0, etc.
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+
+env:
+  JAVA_VERSION: '17'
+  FLUTTER_VERSION: '3.24.x'
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for commit hash
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ steps.tag.outputs.VERSION }}"
+          # Strip leading 'v' for semantic version
+          SEMVER="${TAG#v}"
+          echo "SEMVER=$SEMVER" >> $GITHUB_OUTPUT
+          echo "Tag: $TAG -> Semver: $SEMVER"
+
+      - name: Extract commit hash
+        id: commit
+        run: |
+          HASH=$(git rev-parse --short HEAD)
+          echo "HASH=$HASH" >> $GITHUB_OUTPUT
+          echo "Commit hash: $HASH"
+
+      - name: Generate build date
+        id: date
+        run: |
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_OUTPUT
+          echo "Build date: $BUILD_DATE"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build APK
+        run: |
+          flutter build apk \
+            --release \
+            --dart-define=COMMIT_HASH=${{ steps.commit.outputs.HASH }} \
+            --dart-define=BUILD_DATE=${{ steps.date.outputs.BUILD_DATE }}
+
+      - name: Generate SHA-256 checksum
+        id: checksum
+        run: |
+          SHA256=$(sha256sum build/app/outputs/flutter-apk/app-release.apk | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA-256: $SHA256"
+
+      - name: Generate update.json
+        run: |
+          cat > update.json << EOF
+          {
+            "version": "${{ steps.version.outputs.SEMVER }}",
+            "commit": "${{ steps.commit.outputs.HASH }}",
+            "buildDate": "${{ steps.date.outputs.BUILD_DATE }}",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.VERSION }}/app-release.apk",
+            "sha256": "${{ steps.checksum.outputs.SHA256 }}",
+            "releaseNotes": "See release notes below."
+          }
+          EOF
+          echo "Generated update.json:"
+          cat update.json
+
+      - name: Get release notes from tag message
+        id: notes
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            NOTES="Release ${{ steps.tag.outputs.VERSION }}"
+          else
+            # Try to get annotated tag message, fallback to commit message
+            NOTES=$(git tag -l "${{ steps.tag.outputs.VERSION }}" -n100 2>/dev/null | tail -n +2 | sed 's/^[[:space:]]*//' || echo "Release ${{ steps.tag.outputs.VERSION }}")
+            if [ -z "$NOTES" ] || [ "$NOTES" = "Release ${{ steps.tag.outputs.VERSION }}" ]; then
+              NOTES=$(git log -1 --pretty=%B 2>/dev/null | head -20 || echo "Release ${{ steps.tag.outputs.VERSION }}")
+            fi
+          fi
+          # Escape newlines for GitHub Actions output
+          NOTES_ESCAPED=$(echo "$NOTES" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
+          echo "NOTES=$NOTES_ESCAPED" >> $GITHUB_OUTPUT
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smsgo-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.VERSION }}
+          name: "SmsGo ${{ steps.tag.outputs.VERSION }}"
+          body: |
+            ## What's Changed
+            ${{ steps.notes.outputs.NOTES }}
+
+            **Build Info**
+            - Version: `${{ steps.version.outputs.SEMVER }}`
+            - Commit: `${{ steps.commit.outputs.HASH }}`
+            - Build Date: `${{ steps.date.outputs.BUILD_DATE }}`
+            - SHA-256: `${{ steps.checksum.outputs.SHA256 }}`
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            update.json
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
