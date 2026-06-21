@@ -1,26 +1,26 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  // Brand — dark mode uses green, light mode uses deeper green
+  // Brand
   static const primary = Color(0xFF00D2A0);
   static const primaryDark = Color(0xFF00B88C);
   static const accent = Color(0xFF00D2A0);
 
-  // Dark theme
-  static const darkBg = Color(0xFF0A0F0D);
-  static const darkSurface = Color(0xFF121916);
-  static const darkCard = Color(0xFF1A2420);
-  static const darkBorder = Color(0xFF253030);
-  static const darkText = Color(0xFFE8F0EC);
-  static const darkSubtext = Color(0xFF7A9088);
+  // Dark theme — neutral dark grays, no green tint
+  static const darkBg = Color(0xFF0E0E12);
+  static const darkSurface = Color(0xFF16161A);
+  static const darkCard = Color(0xFF1E1E24);
+  static const darkBorder = Color(0xFF2A2A32);
+  static const darkText = Color(0xFFEDEDF0);
+  static const darkSubtext = Color(0xFF8585A0);
 
-  // Light theme
-  static const lightBg = Color(0xFFF6F8F7);
+  // Light theme — neutral whites, no green tint
+  static const lightBg = Color(0xFFF5F5F7);
   static const lightSurface = Color(0xFFFFFFFF);
-  static const lightCard = Color(0xFFEEF2F0);
-  static const lightBorder = Color(0xFFD8DDD9);
-  static const lightText = Color(0xFF1A2420);
-  static const lightSubtext = Color(0xFF667770);
+  static const lightCard = Color(0xFFEDEDEF);
+  static const lightBorder = Color(0xFFDDDDD8);
+  static const lightText = Color(0xFF1A1A2E);
+  static const lightSubtext = Color(0xFF777780);
 
   // Status
   static const success = Color(0xFF00D2A0);
@@ -70,7 +70,13 @@ class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: AppColors.darkSurface,
-        indicatorColor: AppColors.primary.withValues(alpha: 0.15),
+        indicatorColor: Colors.transparent,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const IconThemeData(color: AppColors.primary, size: 22);
+          }
+          return const IconThemeData(color: AppColors.darkSubtext, size: 22);
+        }),
         labelTextStyle: WidgetStateProperty.all(
           const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
         ),
@@ -117,7 +123,7 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         backgroundColor: AppColors.darkCard,
-        selectedColor: AppColors.primary.withValues(alpha: 0.2),
+        selectedColor: AppColors.primary.withValues(alpha: 0.15),
         side: const BorderSide(color: AppColors.darkBorder),
         labelStyle: const TextStyle(fontSize: 13, color: AppColors.darkText),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -139,11 +145,13 @@ class AppTheme {
   }
 
   static ThemeData light() {
+    const primary = Color(0xFF1B5E3A);
+
     return ThemeData(
       brightness: Brightness.light,
       scaffoldBackgroundColor: AppColors.lightBg,
       colorScheme: const ColorScheme.light(
-        primary: Color(0xFF2D6A4F),
+        primary: primary,
         secondary: AppColors.accent,
         surface: AppColors.lightSurface,
         error: AppColors.error,
@@ -172,7 +180,13 @@ class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: AppColors.lightSurface,
-        indicatorColor: const Color(0xFF2D6A4F).withValues(alpha: 0.12),
+        indicatorColor: Colors.transparent,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const IconThemeData(color: primary, size: 22);
+          }
+          return const IconThemeData(color: AppColors.lightSubtext, size: 22);
+        }),
         labelTextStyle: WidgetStateProperty.all(
           const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
         ),
@@ -195,15 +209,15 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFF2D6A4F), width: 1.5),
+          borderSide: const BorderSide(color: primary, width: 1.5),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        hintStyle: const TextStyle(color: Color(0xFF889990), fontSize: 14),
-        labelStyle: const TextStyle(color: Color(0xFF667770)),
+        hintStyle: const TextStyle(color: Color(0xFF999AA0), fontSize: 14),
+        labelStyle: const TextStyle(color: AppColors.lightSubtext),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF2D6A4F),
+          backgroundColor: primary,
           foregroundColor: Colors.white,
           elevation: 0,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -213,13 +227,13 @@ class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: const Color(0xFF2D6A4F),
+          foregroundColor: primary,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: AppColors.lightCard,
-        selectedColor: const Color(0xFF2D6A4F).withValues(alpha: 0.12),
+        selectedColor: primary.withValues(alpha: 0.1),
         side: const BorderSide(color: AppColors.lightBorder),
         labelStyle: const TextStyle(fontSize: 13, color: AppColors.lightText),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -230,12 +244,12 @@ class AppTheme {
         headlineSmall: TextStyle(color: AppColors.lightText, fontSize: 18, fontWeight: FontWeight.w600),
         titleLarge: TextStyle(color: AppColors.lightText, fontSize: 16, fontWeight: FontWeight.w600),
         titleMedium: TextStyle(color: AppColors.lightText, fontSize: 15, fontWeight: FontWeight.w500),
-        titleSmall: TextStyle(color: Color(0xFF667770), fontSize: 13, fontWeight: FontWeight.w500),
+        titleSmall: TextStyle(color: AppColors.lightSubtext, fontSize: 13, fontWeight: FontWeight.w500),
         bodyLarge: TextStyle(color: AppColors.lightText, fontSize: 15),
         bodyMedium: TextStyle(color: AppColors.lightText, fontSize: 14),
-        bodySmall: TextStyle(color: Color(0xFF667770), fontSize: 12),
+        bodySmall: TextStyle(color: AppColors.lightSubtext, fontSize: 12),
         labelLarge: TextStyle(color: AppColors.lightText, fontSize: 14, fontWeight: FontWeight.w600),
-        labelSmall: TextStyle(color: Color(0xFF667770), fontSize: 11, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+        labelSmall: TextStyle(color: AppColors.lightSubtext, fontSize: 11, fontWeight: FontWeight.w500, letterSpacing: 0.5),
       ),
     );
   }

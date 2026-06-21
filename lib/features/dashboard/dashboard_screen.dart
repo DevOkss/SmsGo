@@ -30,12 +30,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dashboard'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: () => context.read<DashboardProvider>().load(),
-          ),
-        ],
       ),
       body: Consumer<DashboardProvider>(
         builder: (context, provider, _) {
@@ -395,7 +389,7 @@ class _SimTile extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.sim_card_rounded, size: 20, color: AppColors.primary),
+            Icon(Icons.sim_card_rounded, size: 20, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -513,7 +507,7 @@ class _CampaignSummaryTile extends StatelessWidget {
                 fontWeight: FontWeight.w700,
                 color: campaign.totalLeads > 0 && campaign.sentCount >= campaign.totalLeads
                     ? AppColors.success
-                    : AppColors.primary,
+                    : Theme.of(context).colorScheme.primary,
               )),
           ],
         ),

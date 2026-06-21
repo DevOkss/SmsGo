@@ -203,7 +203,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
                               // Start New icon
                               IconButton(
                                 tooltip: 'Start New Session',
-                                icon: const Icon(Icons.play_circle_outline_rounded, color: AppColors.primary),
+                                icon: Icon(Icons.play_circle_outline_rounded, color: Theme.of(context).colorScheme.primary),
                                 onPressed: () {
                                   Navigator.push(context, MaterialPageRoute(
                                     builder: (_) => SendSetupScreen(
@@ -267,12 +267,13 @@ class _SessionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary = Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: isDark
-            ? AppColors.primary.withValues(alpha: 0.06)
-            : AppColors.primary.withValues(alpha: 0.04),
+            ? primary.withValues(alpha: 0.06)
+            : primary.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(

@@ -119,13 +119,14 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(40),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 48, color: AppColors.primary.withValues(alpha: 0.3)),
+            Icon(icon, size: 48, color: primary.withValues(alpha: 0.3)),
             const SizedBox(height: 14),
             Text(title,
               style: Theme.of(context).textTheme.titleMedium,
@@ -152,6 +153,7 @@ class ProgressRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     final progressCount = dispatched > 0 ? dispatched : sent;
     final progress = total > 0 ? progressCount / total : 0.0;
     return Column(
@@ -171,8 +173,8 @@ class ProgressRow extends StatelessWidget {
           borderRadius: BorderRadius.circular(3),
           child: LinearProgressIndicator(
             value: progress,
-            backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+            backgroundColor: primary.withValues(alpha: 0.1),
+            valueColor: AlwaysStoppedAnimation<Color>(primary),
             minHeight: 4,
           ),
         ),

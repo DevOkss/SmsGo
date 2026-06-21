@@ -599,9 +599,9 @@ class _CampaignDetailScreenState extends State<CampaignDetailScreen> {
             children: [
               ProgressRow(sent: c.sentCount, total: c.totalLeads, failed: c.failedCount),
               const SizedBox(height: 4),
-              if (c.totalLeads > 0)
-                Text('${(c.progress * 100).toStringAsFixed(0)}% complete',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.primary)),
+                if (c.totalLeads > 0)
+                  Text('${(c.progress * 100).toStringAsFixed(0)}% complete',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary)),
               const SizedBox(height: 12),
               Row(children: [
                 Expanded(child: _Stat('Total Leads', '${c.totalLeads}')),

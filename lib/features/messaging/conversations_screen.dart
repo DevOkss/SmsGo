@@ -513,6 +513,7 @@ class _ConversationTile extends StatelessWidget {
     final simSlot = row['sim_slot'] as String?;
     final createdAt = row['created_at'] as String?;
     final outgoingStatus = row['outgoing_status'] as String?;
+    final primary = Theme.of(context).colorScheme.primary;
 
     return InkWell(
       onTap: onTap,
@@ -521,9 +522,9 @@ class _ConversationTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: unread
             ? BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.06),
+                color: primary.withValues(alpha: 0.06),
                 border: Border(
-                  left: BorderSide(color: AppColors.primary, width: 3),
+                  left: BorderSide(color: primary, width: 3),
                 ),
               )
             : null,
@@ -533,7 +534,7 @@ class _ConversationTile extends StatelessWidget {
               Checkbox(
                 value: selected,
                 onChanged: (_) => onTap(),
-                activeColor: AppColors.primary,
+                activeColor: primary,
                 visualDensity: VisualDensity.compact,
               ),
               const SizedBox(width: 4),
@@ -541,12 +542,12 @@ class _ConversationTile extends StatelessWidget {
             CircleAvatar(
               radius: 22,
               backgroundColor: unread
-                  ? AppColors.primary.withValues(alpha: 0.2)
-                  : AppColors.primary.withValues(alpha: 0.1),
+                  ? primary.withValues(alpha: 0.2)
+                  : primary.withValues(alpha: 0.1),
               child: Icon(
                 Icons.person_rounded,
                 size: 22,
-                color: unread ? AppColors.primary : AppColors.primary.withValues(alpha: 0.6),
+                color: unread ? primary : primary.withValues(alpha: 0.6),
               ),
             ),
             const SizedBox(width: 12),
@@ -607,8 +608,8 @@ class _ConversationTile extends StatelessWidget {
                 margin: const EdgeInsets.only(left: 8),
                 width: 10,
                 height: 10,
-                decoration: const BoxDecoration(
-                  color: AppColors.primary,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -645,10 +646,11 @@ class _SimChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSim2 = label.contains('2');
+    final primary = Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: (isSim2 ? Colors.orange : AppColors.primary).withValues(alpha: 0.12),
+        color: (isSim2 ? Colors.orange : primary).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
@@ -656,7 +658,7 @@ class _SimChip extends StatelessWidget {
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w700,
-          color: isSim2 ? Colors.orange.shade700 : AppColors.primary,
+          color: isSim2 ? Colors.orange.shade700 : primary,
         ),
       ),
     );

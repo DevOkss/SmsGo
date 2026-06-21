@@ -121,7 +121,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: const Text('Toggle light / dark theme'),
               secondary: Icon(
                 isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                color: AppColors.primary,
+                color: Theme.of(context).colorScheme.primary,
               ),
               value: isDark,
               onChanged: (_) => context.read<ThemeProvider>().toggle(),
@@ -151,7 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Divider(height: 1),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.download_rounded, color: AppColors.primary),
+              leading: Icon(Icons.download_rounded, color: Theme.of(context).colorScheme.primary),
               title: const Text('Import Messages'),
               subtitle: const Text('Import SMS from device into conversations'),
               trailing: _importing
@@ -216,7 +216,7 @@ class _AboutSection extends StatelessWidget {
       children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.info_outline_rounded, color: AppColors.primary),
+          leading: Icon(Icons.info_outline_rounded, color: Theme.of(context).colorScheme.primary),
           title: const Text('SmsGo'),
           subtitle: Text('v$version'),
         ),
@@ -266,11 +266,12 @@ class _UpdateStatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     IconData icon;
     Color color;
+    final primary = Theme.of(context).colorScheme.primary;
 
     switch (status) {
       case UpdateStatus.updateAvailable:
         icon = Icons.system_update_rounded;
-        color = AppColors.primary;
+        color = primary;
         break;
       case UpdateStatus.upToDate:
         icon = Icons.check_circle_rounded;
@@ -278,7 +279,7 @@ class _UpdateStatusIcon extends StatelessWidget {
         break;
       case UpdateStatus.downloading:
         icon = Icons.cloud_download_rounded;
-        color = AppColors.primary;
+        color = primary;
         break;
       case UpdateStatus.error:
         icon = Icons.error_outline_rounded;

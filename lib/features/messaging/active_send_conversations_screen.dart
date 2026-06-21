@@ -335,8 +335,8 @@ class _SessionProgressCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(3),
             child: LinearProgressIndicator(
               value: progress,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+              backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+              valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
               minHeight: 4,
             ),
           ),
@@ -388,6 +388,7 @@ class _ActiveConversationTile extends StatelessWidget {
     final lastDirection = conversation.lastDirection as String?;
     final unread = conversation.unread;
     final lastActivity = conversation.lastActivity as String?;
+    final primary = Theme.of(context).colorScheme.primary;
 
     return InkWell(
       onTap: onTap,
@@ -395,9 +396,9 @@ class _ActiveConversationTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: unread
             ? BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.06),
+                color: primary.withValues(alpha: 0.06),
                 border: Border(
-                  left: BorderSide(color: AppColors.primary, width: 3),
+                  left: BorderSide(color: primary, width: 3),
                 ),
               )
             : null,
@@ -406,12 +407,12 @@ class _ActiveConversationTile extends StatelessWidget {
             CircleAvatar(
               radius: 22,
               backgroundColor: unread
-                  ? AppColors.primary.withValues(alpha: 0.2)
-                  : AppColors.primary.withValues(alpha: 0.1),
+                  ? primary.withValues(alpha: 0.2)
+                  : primary.withValues(alpha: 0.1),
               child: Icon(
                 Icons.person_rounded,
                 size: 22,
-                color: unread ? AppColors.primary : AppColors.primary.withValues(alpha: 0.6),
+                color: unread ? primary : primary.withValues(alpha: 0.6),
               ),
             ),
             const SizedBox(width: 12),
