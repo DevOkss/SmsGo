@@ -9,6 +9,8 @@ class SendingSession {
   final int failedCount;
   final bool running;
   final bool paused;
+  final bool stopped;
+  final bool removed;
   final String? nextSendAt;
 
   final int sendInterval; // seconds
@@ -34,6 +36,8 @@ class SendingSession {
     this.failedCount = 0,
     this.running = true,
     this.paused = false,
+    this.stopped = false,
+    this.removed = false,
     this.nextSendAt,
     this.sendInterval = 3,
     int? sendIntervalMin,
@@ -63,6 +67,8 @@ class SendingSession {
         failedCount: map['failed_count'] ?? 0,
         running: map['running'] == 1,
         paused: (map['paused'] ?? 0) == 1,
+        stopped: (map['stopped'] ?? 0) == 1,
+        removed: (map['removed'] ?? 0) == 1,
         nextSendAt: map['next_send_at'],
         sendInterval: map['send_interval'] ?? 3,
         sendIntervalMin: map['send_interval_min'] ?? map['send_interval'] ?? 3,
@@ -88,6 +94,8 @@ class SendingSession {
         'failed_count': failedCount,
         'running': running ? 1 : 0,
         'paused': paused ? 1 : 0,
+        'stopped': stopped ? 1 : 0,
+        'removed': removed ? 1 : 0,
         'next_send_at': nextSendAt,
         'send_interval': sendInterval,
         'send_interval_min': sendIntervalMin,
@@ -115,6 +123,8 @@ class SendingSession {
     int? failedCount,
     bool? running,
     bool? paused,
+    bool? stopped,
+    bool? removed,
     String? nextSendAt,
     int? sendInterval,
     int? sendIntervalMin,
@@ -138,6 +148,8 @@ class SendingSession {
         failedCount: failedCount ?? this.failedCount,
         running: running ?? this.running,
         paused: paused ?? this.paused,
+        stopped: stopped ?? this.stopped,
+        removed: removed ?? this.removed,
         nextSendAt: nextSendAt ?? this.nextSendAt,
         sendInterval: sendInterval ?? this.sendInterval,
         sendIntervalMin: sendIntervalMin ?? this.sendIntervalMin,

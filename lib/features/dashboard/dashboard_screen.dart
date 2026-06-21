@@ -167,12 +167,16 @@ class _ActiveSessionCard extends StatelessWidget {
               Row(
                 children: [
                   StatusBadge(
-                    label: (!session.running && !session.paused && (session.sentCount + session.failedCount >= session.totalTargets))
-                        ? 'COMPLETED'
-                        : (session.running ? 'RUNNING' : (session.paused ? 'PAUSED' : 'STOPPED')),
-                    color: (!session.running && !session.paused && (session.sentCount + session.failedCount >= session.totalTargets))
-                        ? AppColors.success
-                        : (session.running ? AppColors.success : AppColors.darkSubtext),
+                    label: session.stopped
+                        ? 'STOPPED'
+                        : (!session.running && !session.paused && (session.sentCount + session.failedCount >= session.totalTargets))
+                            ? 'COMPLETED'
+                            : (session.running ? 'RUNNING' : (session.paused ? 'PAUSED' : 'STOPPED')),
+                    color: session.stopped
+                        ? AppColors.darkSubtext
+                        : (!session.running && !session.paused && (session.sentCount + session.failedCount >= session.totalTargets))
+                            ? AppColors.success
+                            : (session.running ? AppColors.success : AppColors.darkSubtext),
                   ),
                   if (session.running || session.paused) ...[
                     const SizedBox(width: 8),

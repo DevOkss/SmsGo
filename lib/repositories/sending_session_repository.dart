@@ -11,10 +11,9 @@ class SendingSessionRepository {
  
   Future<List<SendingSession>> getActive() async {
     final db = await _db.database;
-    // Show running sessions AND completed/stopped sessions (ended_at is set).
-    // Completed = all targets processed; Stopped = user-initiated stop.
+    // Show running sessions AND completed/stopped sessions that haven't been removed.
     final result = await db.query('sending_sessions',
-      where: 'running = 1 OR ended_at IS NOT NULL',
+      where: '(running = 1 OR ended_at IS NOT NULL) AND (removed = 0 OR removed IS NULL)',
       orderBy: 'id DESC');
     return result.map(SendingSession.fromMap).toList();
   }
@@ -22,7 +21,8 @@ class SendingSessionRepository {
   Future<List<SendingSession>> getByCampaign(int campaignId) async {
     final db = await _db.database;
     final result = await db.query('sending_sessions',
-      where: 'campaign_id = ?', whereArgs: [campaignId], orderBy: 'id DESC');
+      where: 'campaign_id = ? AND (removed = 0 OR removed IS NULL)',
+      whereArgs: [campaignId], orderBy: 'id DESC');
     return result.map(SendingSession.fromMap).toList();
   }
  
@@ -55,8 +55,27 @@ class SendingSessionRepository {
     await db.update('sending_sessions', {
       'running': 0,
       'paused': 0,
+      'stopped': 1,
       'next_send_at': null,
       'ended_at': DateTime.now().toIso8601String(),
+    }, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> complete(int id) async {
+    final db = await _db.database;
+    await db.update('sending_sessions', {
+      'running': 0,
+      'paused': 0,
+      'stopped': 0,
+      'next_send_at': null,
+      'ended_at': DateTime.now().toIso8601String(),
+    }, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> remove(int id) async {
+    final db = await _db.database;
+    await db.update('sending_sessions', {
+      'removed': 1,
     }, where: 'id = ?', whereArgs: [id]);
   }
 

@@ -19,6 +19,7 @@ class SessionProgress {
   int dispatched;
   bool running;
   bool completed;
+  bool stopped;
   bool paused;
   bool resting;
   int restSeconds;
@@ -35,6 +36,7 @@ class SessionProgress {
     this.dispatched = 0,
     this.running = true,
     this.completed = false,
+    this.stopped = false,
     this.paused = false,
     this.resting = false,
     this.restSeconds = 0,
@@ -42,7 +44,15 @@ class SessionProgress {
     this.nextSendCountdown = 0,
   });
 
-  bool get isDone => completed || !running;
+  bool get isDone => completed || stopped || !running;
+
+  /// Human-readable status: 'running', 'paused', 'stopped', 'completed'
+  String get statusLabel {
+    if (running && !paused) return 'running';
+    if (paused) return 'paused';
+    if (stopped) return 'stopped';
+    return 'completed';
+  }
 }
 
 class ActiveSendProvider extends ChangeNotifier {
@@ -68,6 +78,9 @@ class ActiveSendProvider extends ChangeNotifier {
 
   /// Next send countdown timers per session
   final Map<int, Timer> _nextSendTimers = {};
+
+  /// Debounce timer for reloadConversations (prevents DB hammer on rapid sends)
+  Timer? _reloadDebounce;
 
   bool loading = false;
 
@@ -141,6 +154,7 @@ class ActiveSendProvider extends ChangeNotifier {
         final sessId = row['id'] as int;
         final running = row['running'] as int? ?? 1;
         final isPaused = row['paused'] as int? ?? 0;
+        final isStopped = row['stopped'] as int? ?? 0;
         final counts = sessionCounts[sessId] ?? {'sent': 0, 'failed': 0, 'dispatched': 0};
 
         sessions.add(SessionProgress(
@@ -152,7 +166,8 @@ class ActiveSendProvider extends ChangeNotifier {
           dispatched: counts['dispatched']!,
           total: row['total_targets'] as int? ?? 0,
           running: running == 1,
-          completed: running == 0,
+          completed: running == 0 && isStopped == 0,
+          stopped: isStopped == 1,
           paused: isPaused == 1 && running == 1,
         ));
       }
@@ -266,9 +281,16 @@ class ActiveSendProvider extends ChangeNotifier {
       if (status == 'sending') sess.dispatched++;
       if (status == 'sent') sess.sent++;
       if (status == 'failed') sess.failed++;
-      reloadConversations();
+      _debouncedReloadConversations();
       return;
     } catch (_) {}
+  }
+
+  void _debouncedReloadConversations() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 500), () {
+      reloadConversations();
+    });
   }
 
   Future<void> _findAndReplacePlaceholder(Conversation placeholder) async {
@@ -363,6 +385,65 @@ class ActiveSendProvider extends ChangeNotifier {
   Future<void> reloadConversations() async {
     try {
       if (_repo == null) return;
+
+      // Re-fetch sessions from DB (picks up removed/stopped sessions)
+      final db = await _dbFuture;
+      final sessRows = await db.query(
+        'sending_sessions',
+        where: 'campaign_id = ?',
+        whereArgs: [campaignId],
+        orderBy: 'id DESC',
+      );
+      final sessionIds = sessRows.map((r) => r['id'] as int).toList();
+      final Map<int, Map<String, int>> sessionCounts = {};
+      if (sessionIds.isNotEmpty) {
+        final placeholders = sessionIds.map((_) => '?').join(',');
+        final countRows = await db.rawQuery('''
+          SELECT session_id, status, COUNT(*) as cnt
+          FROM conversation_messages
+          WHERE session_id IN ($placeholders) AND direction = 'out'
+          GROUP BY session_id, status
+        ''', sessionIds);
+        for (final row in countRows) {
+          final sessId = row['session_id'] as int;
+          final status = row['status'] as String?;
+          final cnt = row['cnt'] as int? ?? 0;
+          sessionCounts.putIfAbsent(sessId, () => {'sent': 0, 'failed': 0, 'dispatched': 0});
+          sessionCounts[sessId]!['dispatched'] = sessionCounts[sessId]!['dispatched']! + cnt;
+          if (status == 'sent') sessionCounts[sessId]!['sent'] = cnt;
+          if (status == 'failed') sessionCounts[sessId]!['failed'] = cnt;
+        }
+      }
+      // Preserve stopped state from existing in-memory sessions
+      final stoppedIds = <int>{};
+      for (final s in sessions) {
+        if (s.stopped) stoppedIds.add(s.sessionId);
+      }
+
+      sessions = [];
+      for (final row in sessRows) {
+        final sessId = row['id'] as int;
+        final running = row['running'] as int? ?? 1;
+        final isPaused = row['paused'] as int? ?? 0;
+        final isStopped = row['stopped'] as int? ?? 0;
+        final counts = sessionCounts[sessId] ?? {'sent': 0, 'failed': 0, 'dispatched': 0};
+        final wasStopped = isStopped == 1 || stoppedIds.contains(sessId);
+        sessions.add(SessionProgress(
+          sessionId: sessId,
+          simSlot: row['sim_slot'] as String? ?? 'SIM 1',
+          monitorNumber: row['monitor_number'] as String?,
+          sent: counts['sent']!,
+          failed: counts['failed']!,
+          dispatched: counts['dispatched']!,
+          total: row['total_targets'] as int? ?? 0,
+          running: running == 1,
+          completed: running == 0 && !wasStopped,
+          stopped: wasStopped,
+          paused: isPaused == 1 && running == 1,
+        ));
+      }
+
+      // Re-fetch conversations
       final newConversations = await _repo!.getConversationsForCampaign(campaignId);
       conversations = newConversations;
       final ids = conversations.map((c) => c.id!).toList();
@@ -391,6 +472,7 @@ class ActiveSendProvider extends ChangeNotifier {
   void dispose() {
     _messaging?.removeListener(_onMessagingChanged);
     _messagingDebounce?.cancel();
+    _reloadDebounce?.cancel();
     _sendSub?.cancel();
     _incomingSub?.cancel();
     _convChangeSub?.cancel();
@@ -402,26 +484,30 @@ class ActiveSendProvider extends ChangeNotifier {
   }
 
   void _onMessagingChanged() {
-    // Debounce: avoid cascading rebuilds from MessagingProvider
     _messagingDebounce?.cancel();
-    _messagingDebounce = Timer(const Duration(milliseconds: 300), () {
-      // Sync session states from MessagingProvider
+    _messagingDebounce = Timer(const Duration(milliseconds: 100), () {
       final m = _messaging;
       if (m == null) return;
+      bool changed = false;
       for (final sess in sessions) {
         final match = m.active.where((a) => a.sessionId == sess.sessionId).firstOrNull;
         if (match == null) {
-          if (!sess.completed) {
-            sess.completed = true;
+          if (sess.running) {
             sess.running = false;
-            sess.paused = false;
+            sess.stopped = true;
+            sess.completed = false;
+            changed = true;
           }
         } else {
           sess.running = match.running;
           sess.paused = !match.running;
         }
       }
-      notifyListeners();
+      if (changed) {
+        reloadConversations();
+      } else {
+        notifyListeners();
+      }
     });
   }
 
@@ -531,10 +617,22 @@ class ActiveSendProvider extends ChangeNotifier {
   Future<void> stopSessionById(int sessionId) async {
     await SmsService.instance.stopSession(sessionId);
     final sess = sessions.firstWhere((s) => s.sessionId == sessionId);
-    sess.completed = true;
+    sess.stopped = true;
+    sess.completed = false;
     sess.running = false;
     sess.paused = false;
     _messaging?.stopSending(sessionId);
+    notifyListeners();
+  }
+
+  Future<void> removeSessionById(int sessionId) async {
+    final db = await _dbFuture;
+    await db.delete(
+      'sending_sessions',
+      where: 'id = ?',
+      whereArgs: [sessionId],
+    );
+    sessions.removeWhere((s) => s.sessionId == sessionId);
     notifyListeners();
   }
 }

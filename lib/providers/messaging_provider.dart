@@ -28,6 +28,7 @@ class ActiveSend {
   int dispatched;
   bool running;
   bool completed;
+  bool stopped;
   bool resting;
   String lastMessage;
   int unreadCount;
@@ -48,6 +49,7 @@ class ActiveSend {
     this.dispatched = 0,
     this.running = true,
     this.completed = false,
+    this.stopped = false,
     this.resting = false,
     this.monitorNumber,
     this.selectedGroups = '',
@@ -176,7 +178,8 @@ class MessagingProvider extends ChangeNotifier {
           dispatched: prev != null && prev.dispatched > dbDispatched ? prev.dispatched : dbDispatched,
           total: s.totalTargets,
           running: s.running && !s.paused,
-          completed: !s.running,
+          completed: !s.running && !s.stopped,
+          stopped: s.stopped,
           resting: prev?.resting ?? false,
           countdownSeconds: prev?.countdownSeconds ?? 0,
           isCountingDown: prev?.isCountingDown ?? false,
@@ -329,16 +332,9 @@ class MessagingProvider extends ChangeNotifier {
   }
 
   Future<void> removeSession(int sessionId) async {
-    // Hide the session from the active list without deleting it or clearing session_id.
-    // Conversations stay linked to the campaign until a new incoming reply arrives
-    // from a contact with no active session, at which point they move to Imported Messages.
-    final db = await AppDatabase.instance.database;
-    await db.update(
-      'sending_sessions',
-      {'ended_at': null, 'running': 0},
-      where: 'id = ?',
-      whereArgs: [sessionId],
-    );
+    // Permanently delete the session from the database.
+    // Conversations stay linked to the campaign.
+    await _sessionRepo.delete(sessionId);
     await loadActiveSessions();
   }
 
@@ -461,7 +457,7 @@ class MessagingProvider extends ChangeNotifier {
 
   void _debouncedLoadSessions() {
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+    _debounceTimer = Timer(const Duration(milliseconds: 150), () {
       loadActiveSessions();
     });
   }

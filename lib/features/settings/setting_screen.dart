@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'dart:io' show Platform;
 import '../../core/constants/app_theme.dart';
 import '../../core/widget/app_widgets.dart';
+import '../../database/database.dart';
+import '../../repositories/conversation_repository.dart';
 import '../../providers/theme_provider.dart';
 import '../../providers/update_provider.dart';
 import '../../services/sms_import_gateway.dart';
@@ -166,6 +168,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
           const SizedBox(height: 20),
+          _SectionLabel('DATA MANAGEMENT'),
+          AppCard(
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.delete_sweep_rounded, color: AppColors.error),
+              title: const Text('Delete Campaign Conversations'),
+              subtitle: const Text('Remove all bulk send conversations, sessions, and send logs. Keeps leads and notes.'),
+              onTap: () async {
+                final confirmed = await ConfirmDialog.show(
+                  context,
+                  title: 'Delete campaign data?',
+                  message: 'This will permanently delete all campaign conversations, sending sessions, and send logs. Campaign leads and notes will be preserved. This cannot be undone.',
+                  confirmLabel: 'Delete',
+                  confirmColor: AppColors.error,
+                );
+                if (!confirmed || !context.mounted) return;
+                final db = await AppDatabase.instance.database;
+                final repo = ConversationRepository(db);
+                await repo.deleteCampaignConversations();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Campaign conversations, sessions, and logs deleted')),
+                  );
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
           _SectionLabel('About'),
           _AboutSection(onCheckUpdates: _checkForUpdates),
         ],
@@ -183,8 +213,6 @@ class _AboutSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final updateProvider = context.watch<UpdateProvider>();
     final version = updateProvider.currentVersion;
-    final buildNumber = updateProvider.currentBuildNumber;
-    final commitHash = updateProvider.commitHash;
 
     return AppCard(
       child: Column(
@@ -192,10 +220,9 @@ class _AboutSection extends StatelessWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.info_outline_rounded),
-            title: const Text('Sms Go'),
+            title: const Text('SmsGo'),
             subtitle: Text(
-              'v$version'
-              '${commitHash != null ? ' ($commitHash)' : ''}',
+              'v$version',
             ),
           ),
           const Divider(),

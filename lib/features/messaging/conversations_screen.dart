@@ -45,7 +45,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   void _debouncedLoad() {
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+    _debounceTimer = Timer(const Duration(milliseconds: 150), () {
       if (mounted) _load();
     });
   }

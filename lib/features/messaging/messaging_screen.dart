@@ -243,6 +243,7 @@ class _SessionCard extends StatelessWidget {
   const _SessionCard({required this.session});
 
   Color _badgeColor() {
+    if (session.stopped) return AppColors.darkSubtext;
     if (session.completed) return AppColors.success;
     if (session.resting) return Colors.orange;
     if (session.running) return AppColors.success;
@@ -251,6 +252,7 @@ class _SessionCard extends StatelessWidget {
 
   String _badgeLabel() {
     if (session.completed) return 'COMPLETED';
+    if (session.stopped) return 'STOPPED';
     if (session.resting) return 'RESTING';
     if (session.running) return 'RUNNING';
     return 'PAUSED';
@@ -280,7 +282,7 @@ class _SessionCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall),
             ],
           ),
-          if (!session.completed) ...[
+          if (!session.completed && !session.stopped) ...[
             const SizedBox(height: 6),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -334,7 +336,7 @@ class _SessionCard extends StatelessWidget {
                   final ok = await ConfirmDialog.show(
                     context,
                     title: 'Remove session?',
-                    message: 'This will remove the completed session from the list. Conversations are preserved.',
+                    message: 'This will remove the session from the list. Conversations are preserved.',
                     confirmLabel: 'Remove',
                     confirmColor: AppColors.error,
                   );

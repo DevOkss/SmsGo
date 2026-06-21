@@ -110,8 +110,8 @@ class _ActiveSendConversationsScreenState extends State<ActiveSendConversationsS
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
                   child: _SessionProgressCard(
                     session: sess,
-                    onTogglePause: () => provider.togglePause(sess.sessionId),
-                    onStop: () async {
+                    onTogglePause: sess.completed || sess.stopped ? null : () => provider.togglePause(sess.sessionId),
+                    onStop: (sess.completed || sess.stopped) ? null : () async {
                       final ok = await ConfirmDialog.show(
                         context,
                         title: 'Stop sending?',
@@ -123,6 +123,18 @@ class _ActiveSendConversationsScreenState extends State<ActiveSendConversationsS
                         await provider.stopSessionById(sess.sessionId);
                       }
                     },
+                    onRemove: (sess.completed || sess.stopped) ? () async {
+                      final ok = await ConfirmDialog.show(
+                        context,
+                        title: 'Remove session?',
+                        message: 'This will remove the session from the list. Conversations are preserved.',
+                        confirmLabel: 'Remove',
+                        confirmColor: AppColors.error,
+                      );
+                      if (ok && context.mounted) {
+                        await provider.removeSessionById(sess.sessionId);
+                      }
+                    } : null,
                   ),
                 )),
               if (provider.sessions.isNotEmpty) const SizedBox(height: 4),
@@ -199,13 +211,15 @@ class _ActiveSendConversationsScreenState extends State<ActiveSendConversationsS
 /// Per-session progress card
 class _SessionProgressCard extends StatelessWidget {
   final SessionProgress session;
-  final VoidCallback onTogglePause;
-  final VoidCallback onStop;
+  final VoidCallback? onTogglePause;
+  final VoidCallback? onStop;
+  final VoidCallback? onRemove;
 
   const _SessionProgressCard({
     required this.session,
-    required this.onTogglePause,
-    required this.onStop,
+    this.onTogglePause,
+    this.onStop,
+    this.onRemove,
   });
 
   @override
@@ -220,7 +234,9 @@ class _SessionProgressCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              if (session.completed)
+              if (session.stopped)
+                const StatusBadge(label: 'STOPPED', color: AppColors.error)
+              else if (session.completed)
                 const StatusBadge(label: 'COMPLETED', color: AppColors.success)
               else if (session.paused)
                 const StatusBadge(label: 'PAUSED', color: Colors.orange)
@@ -262,7 +278,7 @@ class _SessionProgressCard extends StatelessWidget {
                 children: [
                   Text('SIM: ${session.simSlot}',
                     style: Theme.of(context).textTheme.bodySmall),
-                  if (!session.completed) ...[
+                  if (session.running) ...[
                     const SizedBox(width: 8),
                     IconButton(
                       tooltip: session.paused ? 'Resume' : 'Pause',
@@ -279,6 +295,14 @@ class _SessionProgressCard extends StatelessWidget {
                       tooltip: 'Stop',
                       icon: const Icon(Icons.stop_circle_rounded, color: AppColors.error, size: 20),
                       onPressed: onStop,
+                    ),
+                  ],
+                  if (onRemove != null) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      tooltip: 'Remove',
+                      icon: const Icon(Icons.close_rounded, color: AppColors.darkSubtext, size: 20),
+                      onPressed: onRemove,
                     ),
                   ],
                 ],
@@ -319,6 +343,16 @@ class _SessionProgressCard extends StatelessWidget {
               'Bulk send completed! ${session.sent} sent, ${session.failed} failed.',
               style: const TextStyle(
                 color: AppColors.success,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (session.stopped) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Session stopped. ${session.sent} sent, ${session.failed} failed.',
+              style: const TextStyle(
+                color: AppColors.error,
                 fontWeight: FontWeight.w600,
               ),
             ),

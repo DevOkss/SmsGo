@@ -235,14 +235,24 @@ class SmsService {
             );
           }
         } else {
-          // No active session for this campaign — move conversation to Imported Messages
+          // No active session for this campaign.
+          // Only move to Imported Messages if the campaign itself is deleted.
           if (existingSessionId != null) {
-            await db.update(
-              'conversations',
-              {'session_id': null},
+            final campaignExists = await db.query(
+              'campaigns',
+              columns: ['id'],
               where: 'id = ?',
-              whereArgs: [convId],
+              whereArgs: [existingCampaignId],
+              limit: 1,
             );
+            if (campaignExists.isEmpty) {
+              await db.update(
+                'conversations',
+                {'session_id': null},
+                where: 'id = ?',
+                whereArgs: [convId],
+              );
+            }
           }
         }
       }
@@ -402,20 +412,16 @@ class SmsService {
       }
     }
 
-    // Batch create missing conversations using a transaction
+    // Batch create missing conversations (individual inserts, no transaction to avoid DB lock)
     final missingLeads = targets.where((l) => !conversationMap.containsKey(l.phoneNumber)).toList();
-    if (missingLeads.isNotEmpty) {
-      await db.transaction((txn) async {
-        for (final lead in missingLeads) {
-          final convId = await convRepo.createConversation(
-            sessionId,
-            lead.phoneNumber,
-            leadId: lead.id,
-            campaignId: session.campaignId,
-          );
-          conversationMap[lead.phoneNumber] = convId;
-        }
-      });
+    for (final lead in missingLeads) {
+      final convId = await convRepo.createConversation(
+        sessionId,
+        lead.phoneNumber,
+        leadId: lead.id,
+        campaignId: session.campaignId,
+      );
+      conversationMap[lead.phoneNumber] = convId;
     }
 
     late void Function() scheduleNext;
@@ -439,7 +445,7 @@ class SmsService {
         _timers.remove(sessionId);
         _msgIndex.remove(sessionId);
         stopFailureTimeout(sessionId);
-        await _sessionRepo.stop(sessionId);
+        await _sessionRepo.complete(sessionId);
         onProgress?.call(sent, failed, targets.length, lastMessage: '', dispatched: targets.length);
         // Emit completion event
         try {

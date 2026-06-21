@@ -170,9 +170,6 @@ class ConversationRepository {
     where.add('c.campaign_id = ?');
     whereArgs.add(campaignId);
 
-    // Only show conversations with an active session (not orphaned to Imported Messages)
-    where.add('c.session_id IS NOT NULL');
-
     if (contactedOnly) {
       where.add('EXISTS (SELECT 1 FROM conversation_messages cm WHERE cm.conversation_id = c.id)');
     }
@@ -340,6 +337,57 @@ class ConversationRepository {
     await db.delete('conversations');
   }
 
+  /// Deletes all campaign-associated conversations, their messages,
+  /// the sending sessions, and send logs. Leaves leads, notes, and campaigns intact.
+  Future<void> deleteCampaignConversations() async {
+    // Find campaign IDs that have conversations
+    final campRows = await db.rawQuery(
+      'SELECT DISTINCT campaign_id FROM conversations WHERE campaign_id IS NOT NULL',
+    );
+    final campaignIds = campRows.map((r) => r['campaign_id'] as int).toList();
+    if (campaignIds.isEmpty) return;
+
+    // Find session IDs for those campaigns
+    final placeholders = campaignIds.map((_) => '?').join(',');
+    final sessRows = await db.rawQuery(
+      'SELECT id FROM sending_sessions WHERE campaign_id IN ($placeholders)',
+      campaignIds,
+    );
+    final sessionIds = sessRows.map((r) => r['id'] as int).toList();
+
+    // Delete send_logs for those sessions
+    if (sessionIds.isNotEmpty) {
+      final sPlaceholders = sessionIds.map((_) => '?').join(',');
+      await db.delete(
+        'send_logs',
+        where: 'session_id IN ($sPlaceholders)',
+        whereArgs: sessionIds,
+      );
+    }
+
+    // Delete conversation_messages for campaign conversations (CASCADE handles this, but explicit is safer)
+    await db.rawDelete(
+      'DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE campaign_id IN ($placeholders))',
+      campaignIds,
+    );
+
+    // Delete conversations for those campaigns
+    await db.delete(
+      'conversations',
+      where: 'campaign_id IN ($placeholders)',
+      whereArgs: campaignIds,
+    );
+
+    // Delete sending sessions for those campaigns
+    await db.delete(
+      'sending_sessions',
+      where: 'campaign_id IN ($placeholders)',
+      whereArgs: campaignIds,
+    );
+
+    _changeController.add(null);
+  }
+
   Future<void> updateMessageStatus(int messageId, String status) async {
     await db.update(
       'conversation_messages',
@@ -357,10 +405,10 @@ class ConversationRepository {
     final whereArgs = <dynamic>[];
 
     // By default, only show conversations without an active session (imported/direct/orphaned campaign conversations)
-    // Also exclude conversations whose campaign still has an active session (running = 1)
+    // Only include campaign conversations whose campaign has been deleted
     if (!includeSessionConversations) {
       where.add('c.session_id IS NULL');
-      where.add('c.campaign_id NOT IN (SELECT ss.campaign_id FROM sending_sessions ss WHERE ss.running = 1)');
+      where.add('(c.campaign_id IS NULL OR c.campaign_id NOT IN (SELECT id FROM campaigns))');
     }
 
     if (replied != null) {
@@ -414,10 +462,10 @@ class ConversationRepository {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  /// Returns count of unread conversations in Imported Messages (session_id IS NULL and no active session for campaign).
+  /// Returns count of unread conversations in Imported Messages (session_id IS NULL and campaign deleted or no campaign).
   Future<int> getUnreadCountForImported() async {
     final result = await db.rawQuery(
-      "SELECT COUNT(*) as cnt FROM conversations WHERE unread = 1 AND session_id IS NULL AND campaign_id NOT IN (SELECT ss.campaign_id FROM sending_sessions ss WHERE ss.running = 1)",
+      "SELECT COUNT(*) as cnt FROM conversations WHERE unread = 1 AND session_id IS NULL AND (campaign_id IS NULL OR campaign_id NOT IN (SELECT id FROM campaigns))",
     );
     return Sqflite.firstIntValue(result) ?? 0;
   }

@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 class Migrations {
-  static const int currentVersion = 19;
+  static const int currentVersion = 20;
 
 
 
@@ -149,6 +149,12 @@ class Migrations {
     if (oldVersion < 19) {
       await _createPerformanceIndexes(db);
     }
+
+    // v20: add stopped and removed columns to sending_sessions
+    if (oldVersion < 20) {
+      await db.execute("ALTER TABLE sending_sessions ADD COLUMN stopped INTEGER DEFAULT 0");
+      await db.execute("ALTER TABLE sending_sessions ADD COLUMN removed INTEGER DEFAULT 0");
+    }
   }
 
 
@@ -233,7 +239,9 @@ class Migrations {
         paused INTEGER DEFAULT 0,
         next_send_at TEXT,
         created_at TEXT NOT NULL,
-        ended_at TEXT
+        ended_at TEXT,
+        stopped INTEGER DEFAULT 0,
+        removed INTEGER DEFAULT 0
       )
     ''');
   }
