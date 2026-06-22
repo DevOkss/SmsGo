@@ -11,6 +11,7 @@ import '../repositories/sending_session_repository.dart';
 import 'sms_gateway.dart';
 import '../database/database.dart';
 import '../repositories/conversation_repository.dart';
+import 'license_service.dart';
 
 typedef OnSendProgress = void Function(int sent, int failed, int total, {String lastMessage, int dispatched});
 
@@ -374,6 +375,12 @@ class SmsService {
     OnSendProgress? onProgress,
     void Function(int sessionId)? onSessionCreated,
   }) async {
+    // License guard: block SMS sending if license is not active
+    final licenseStatus = await LicenseService.instance.validate();
+    if (licenseStatus != LicenseStatus.active && licenseStatus != LicenseStatus.cached) {
+      throw Exception('A valid license is required to send SMS. Please activate your license in Settings.');
+    }
+
     // Insert session record
     final sessionId = await _sessionRepo.create(
       session.copyWith(

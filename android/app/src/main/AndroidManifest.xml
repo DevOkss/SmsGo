@@ -80,6 +80,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="tel" />
             </intent-filter>
+
+            <!-- Supabase deep link for email verification -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.smsgo" android:host="verify" />
+            </intent-filter>
         </activity>
 
         <!-- Alias to expose SENDTO handling with all schemes for role detection on OEMs -->

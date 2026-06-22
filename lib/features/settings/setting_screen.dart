@@ -9,8 +9,11 @@ import '../../providers/theme_provider.dart';
 import '../../providers/update_provider.dart';
 import '../../services/sms_import_gateway.dart';
 import '../../services/native_sms_import_controller.dart';
+import '../../services/device_fingerprint_service.dart';
 import 'widgets/update_dialog.dart';
 import 'widgets/download_progress_widget.dart';
+import 'widgets/account_section.dart';
+import 'widgets/license_section.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -106,139 +109,172 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final updateProvider = context.watch<UpdateProvider>();
+    final version = updateProvider.currentVersion;
+    final fingerprint = DeviceFingerprintService.instance.fingerprint;
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          // Appearance
-          _SectionLabel('Appearance'),
-          Selector<ThemeProvider, bool>(
-            selector: (_, provider) => provider.isDark,
-            builder: (context, isDark, _) => SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Dark Mode'),
-              subtitle: const Text('Toggle light / dark theme'),
-              secondary: Icon(
-                isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                color: Theme.of(context).colorScheme.primary,
+          // ── Account ──
+          _SectionLabel('Account'),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: const [AccountSection()],
+          ),
+          const SizedBox(height: 24),
+
+          // ── License ──
+          _SectionLabel('License'),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: const [LicenseSection()],
+          ),
+          const SizedBox(height: 24),
+
+          // ── Preferences ──
+          _SectionLabel('Preferences'),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: [
+              Selector<ThemeProvider, bool>(
+                selector: (_, provider) => provider.isDark,
+                builder: (context, isDark, _) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Dark Mode'),
+                  subtitle: const Text('Toggle light / dark theme'),
+                  secondary: Icon(
+                    isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  value: isDark,
+                  onChanged: (_) => context.read<ThemeProvider>().toggle(),
+                  activeThumbColor: AppColors.primary,
+                ),
               ),
-              value: isDark,
-              onChanged: (_) => context.read<ThemeProvider>().toggle(),
-              activeThumbColor: AppColors.primary,
-            ),
+            ],
           ),
 
+          // ── SMS (Android only) ──
           if (Platform.isAndroid) ...[
-            const Divider(height: 1),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             _SectionLabel('SMS'),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(
-                _isDefaultSmsApp ? Icons.check_circle_rounded : Icons.chat_bubble_outline_rounded,
-                color: _isDefaultSmsApp ? AppColors.success : AppColors.darkSubtext,
-              ),
-              title: const Text('Default SMS App'),
-              subtitle: Text(_isDefaultSmsApp ? 'SmsGo is the default SMS app' : 'Not set as default'),
-              trailing: _isDefaultSmsApp
-                  ? const StatusBadge(label: 'ACTIVE', color: AppColors.success)
-                  : ElevatedButton(
-                      onPressed: _setAsDefault,
-                      child: const Text('Set'),
-                    ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.download_rounded, color: Theme.of(context).colorScheme.primary),
-              title: const Text('Import Messages'),
-              subtitle: const Text('Import SMS from device into conversations'),
-              trailing: _importing
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : IconButton(
-                      icon: const Icon(Icons.refresh_rounded),
-                      onPressed: _isDefaultSmsApp ? _importMessages : null,
-                      tooltip: _isDefaultSmsApp ? 'Import now' : 'Set as default first',
-                    ),
+            const SizedBox(height: 8),
+            _SettingsCard(
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    _isDefaultSmsApp ? Icons.check_circle_rounded : Icons.chat_bubble_outline_rounded,
+                    color: _isDefaultSmsApp ? AppColors.success : AppColors.darkSubtext,
+                  ),
+                  title: const Text('Default SMS App'),
+                  subtitle: Text(_isDefaultSmsApp ? 'SmsGo is the default SMS app' : 'Not set as default'),
+                  trailing: _isDefaultSmsApp
+                      ? const StatusBadge(label: 'ACTIVE', color: AppColors.success)
+                      : ElevatedButton(
+                          onPressed: _setAsDefault,
+                          child: const Text('Set'),
+                        ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.download_rounded, color: Theme.of(context).colorScheme.primary),
+                  title: const Text('Import Messages'),
+                  subtitle: const Text('Import SMS from device into conversations'),
+                  trailing: _importing
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : IconButton(
+                          icon: const Icon(Icons.refresh_rounded),
+                          onPressed: _isDefaultSmsApp ? _importMessages : null,
+                          tooltip: _isDefaultSmsApp ? 'Import now' : 'Set as default first',
+                        ),
+                ),
+              ],
             ),
           ],
 
-          const Divider(height: 1),
-          const SizedBox(height: 16),
-          _SectionLabel('DATA MANAGEMENT'),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.delete_sweep_rounded, color: AppColors.error),
-            title: const Text('Delete Campaign Data'),
-            subtitle: const Text('Remove all bulk send conversations, sessions, and send logs.'),
-            onTap: () async {
-              final confirmed = await ConfirmDialog.show(
-                context,
-                title: 'Delete campaign data?',
-                message: 'This will permanently delete all campaign conversations, sending sessions, and send logs. Campaign leads and notes will be preserved. This cannot be undone.',
-                confirmLabel: 'Delete',
-                confirmColor: AppColors.error,
-              );
-              if (!confirmed || !context.mounted) return;
-              final db = await AppDatabase.instance.database;
-              final repo = ConversationRepository(db);
-              await repo.deleteCampaignConversations();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Campaign conversations, sessions, and logs deleted')),
-                );
-              }
-            },
+          // ── Data ──
+          const SizedBox(height: 24),
+          _SectionLabel('Data'),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.delete_sweep_rounded, color: AppColors.error),
+                title: const Text('Delete Campaign Data'),
+                subtitle: const Text('Remove all bulk send conversations, sessions, and send logs.'),
+                onTap: () async {
+                  final confirmed = await ConfirmDialog.show(
+                    context,
+                    title: 'Delete campaign data?',
+                    message: 'This will permanently delete all campaign conversations, sending sessions, and send logs. Campaign leads and notes will be preserved. This cannot be undone.',
+                    confirmLabel: 'Delete',
+                    confirmColor: AppColors.error,
+                  );
+                  if (!confirmed || !context.mounted) return;
+                  final db = await AppDatabase.instance.database;
+                  final repo = ConversationRepository(db);
+                  await repo.deleteCampaignConversations();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Campaign conversations, sessions, and logs deleted')),
+                    );
+                  }
+                },
+              ),
+            ],
           ),
 
-          const Divider(height: 1),
-          const SizedBox(height: 16),
+          // ── About ──
+          const SizedBox(height: 24),
           _SectionLabel('About'),
-          _AboutSection(onCheckUpdates: _checkForUpdates),
+          const SizedBox(height: 8),
+          _SettingsCard(
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.info_outline_rounded, color: Theme.of(context).colorScheme.primary),
+                title: const Text('SmsGo'),
+                subtitle: Text('v$version'),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.smartphone_rounded, color: Theme.of(context).colorScheme.primary),
+                title: const Text('Device ID'),
+                subtitle: Text(
+                  '${fingerprint.substring(0, 8)}...${fingerprint.substring(fingerprint.length - 8)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: _UpdateStatusIcon(status: updateProvider.status),
+                title: const Text('Check for Updates'),
+                subtitle: Text(_updateStatusText(updateProvider)),
+                trailing: updateProvider.isChecking
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        icon: const Icon(Icons.refresh_rounded),
+                        onPressed: _checkForUpdates,
+                        tooltip: 'Check now',
+                      ),
+              ),
+            ],
+          ),
         ],
       ),
-    );
-  }
-}
-
-class _AboutSection extends StatelessWidget {
-  final VoidCallback onCheckUpdates;
-
-  const _AboutSection({required this.onCheckUpdates});
-
-  @override
-  Widget build(BuildContext context) {
-    final updateProvider = context.watch<UpdateProvider>();
-    final version = updateProvider.currentVersion;
-
-    return Column(
-      children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.info_outline_rounded, color: Theme.of(context).colorScheme.primary),
-          title: const Text('SmsGo'),
-          subtitle: Text('v$version'),
-        ),
-        const Divider(height: 1),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: _UpdateStatusIcon(status: updateProvider.status),
-          title: const Text('Check for Updates'),
-          subtitle: Text(_updateStatusText(updateProvider)),
-          trailing: updateProvider.isChecking
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : IconButton(
-                  icon: const Icon(Icons.refresh_rounded),
-                  onPressed: onCheckUpdates,
-                  tooltip: 'Check now',
-                ),
-        ),
-      ],
     );
   }
 
@@ -294,16 +330,46 @@ class _UpdateStatusIcon extends StatelessWidget {
   }
 }
 
+class _SettingsCard extends StatelessWidget {
+  final List<Widget> children;
+
+  const _SettingsCard({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.05)
+            : Colors.black.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Column(children: children),
+      ),
+    );
+  }
+}
+
 class _SectionLabel extends StatelessWidget {
   final String text;
   const _SectionLabel(this.text);
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6, left: 2),
-      child: Text(text.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall),
+    return Text(
+      text.toUpperCase(),
+      style: Theme.of(context).textTheme.labelSmall,
     );
   }
 }

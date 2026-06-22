@@ -9,6 +9,8 @@ import '../../models/monitor_number.dart';
 import '../../providers/messaging_provider.dart';
 import '../../providers/campaign_provider.dart';
 import '../../providers/notes_provider.dart';
+import '../../providers/license_provider.dart';
+import '../../services/license_service.dart';
 import '../../repositories/lead_repository.dart';
 import '../../repositories/conversation_repository.dart';
 import '../../database/database.dart';
@@ -528,9 +530,7 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
                   ? const SizedBox(width: 18, height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.play_arrow_rounded),
-              label: Text(_canStartSending
-                  ? 'Start Bulk Send (${_rangeEnd - _rangeStart + 1} targets)'
-                  : 'Test send first'),
+              label: Text(_getSendButtonLabel()),
               style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
             ),
           ],
@@ -856,6 +856,11 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
   }
 
   bool get _canStartSending {
+    final license = context.read<LicenseProvider>();
+    if (license.status != LicenseStatus.active &&
+        license.status != LicenseStatus.cached) {
+      return false;
+    }
     if (_saving || !_testSent) return false;
     if (_totalUnsent == 0) return false;
     final start = _rangeStart;
@@ -864,6 +869,18 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
     if (start > end) return false;
     if (end > _totalUnsent) return false;
     return true;
+  }
+
+  String _getSendButtonLabel() {
+    final license = context.read<LicenseProvider>();
+    if (license.status != LicenseStatus.active &&
+        license.status != LicenseStatus.cached) {
+      return 'License Required';
+    }
+    if (_saving) return 'Sending...';
+    if (!_testSent) return 'Test send first';
+    if (_totalUnsent == 0) return 'No unsent contacts';
+    return 'Start Bulk Send (${_rangeEnd - _rangeStart + 1} targets)';
   }
 
   bool _saving = false;
@@ -1080,8 +1097,9 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final msg = e.toString().replaceAll('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error),
+          SnackBar(content: Text(msg), backgroundColor: AppColors.error),
         );
       }
     } finally {

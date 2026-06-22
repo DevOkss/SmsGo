@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'main.dart';
 import 'providers/update_provider.dart';
 import 'features/settings/widgets/update_dialog.dart';
 import 'features/settings/widgets/download_progress_widget.dart';
@@ -19,23 +18,17 @@ class _SplashScreenState extends State<SplashScreen> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    Timer(const Duration(seconds: 2), () {
-      if (!mounted) return;
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const MainShell(),
-          transitionsBuilder: (_, anim, __, child) =>
-              FadeTransition(opacity: anim, child: child),
-          transitionDuration: const Duration(milliseconds: 400),
-        ),
-      );
-    });
 
     // Trigger initial update check after a short delay (non-blocking)
     Timer(const Duration(milliseconds: 500), () {
       _checkForUpdates();
     });
+  }
+
+  @override
+  void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
   }
 
   Future<void> _checkForUpdates() async {

@@ -12,6 +12,7 @@ import '../repositories/monitor_number_repository.dart';
 import '../repositories/notes_repository.dart';
 import '../repositories/sending_session_repository.dart';
 import '../services/sms_service.dart';
+import '../services/license_service.dart';
 
 class ActiveSend {
   final int sessionId;
@@ -212,6 +213,12 @@ class MessagingProvider extends ChangeNotifier {
     int? rangeStart,
     int? rangeEnd,
   }) async {
+    // License guard: check before doing any work
+    final licenseStatus = await LicenseService.instance.validate();
+    if (licenseStatus != LicenseStatus.active && licenseStatus != LicenseStatus.cached) {
+      throw Exception('A valid license is required to send SMS. Please activate your license in Settings.');
+    }
+
     final targets = await _leadRepo.getUnsent(campaign.id!, network: targetNetwork, rangeStart: rangeStart, rangeEnd: rangeEnd);
     if (targets.isEmpty) throw Exception('No unsent leads for this selection');
     if (selectedGroups.isEmpty) throw Exception('No message groups selected');
