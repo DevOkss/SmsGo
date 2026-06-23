@@ -85,7 +85,14 @@ jobs:
           grep "^version:" pubspec.yaml
 
       - name: Create .env for build
-        run: cp .env.example .env
+        run: |
+          cat > .env << EOF
+          GITHUB_OWNER=DevOkss
+          GITHUB_REPO=SmsGo
+          UPDATE_CHECK_INTERVAL_HOURS=24
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          EOF
 
       - name: Decode signing keystore
         run: |
