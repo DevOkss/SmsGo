@@ -16,6 +16,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Keep app alive for receiving SMS in background -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Foreground service for bulk sending -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- APK install permission for auto-update -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -154,6 +157,14 @@
         <receiver
             android:name=".SentReceiver"
             android:exported="false" />
+
+        <!-- Override flutter_background_service plugin's BackgroundService to add foregroundServiceType (required Android 14+) -->
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:enabled="true"
+            android:exported="true"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Package visibility for Android 11+ (API 30+) -->

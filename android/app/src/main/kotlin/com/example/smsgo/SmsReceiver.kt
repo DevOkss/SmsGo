@@ -139,7 +139,7 @@ class SmsReceiver : BroadcastReceiver() {
       }
 
       val notification = builder
-        .setSmallIcon(android.R.drawable.stat_notify_chat)
+        .setSmallIcon(R.drawable.ic_notification)
         .setContentTitle(from)
         .setContentText(body)
         .setStyle(android.app.Notification.BigTextStyle().bigText(body))

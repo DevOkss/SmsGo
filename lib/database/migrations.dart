@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 class Migrations {
-  static const int currentVersion = 20;
+  static const int currentVersion = 21;
 
 
 
@@ -154,6 +154,14 @@ class Migrations {
     if (oldVersion < 20) {
       await db.execute("ALTER TABLE sending_sessions ADD COLUMN stopped INTEGER DEFAULT 0");
       await db.execute("ALTER TABLE sending_sessions ADD COLUMN removed INTEGER DEFAULT 0");
+    }
+
+    // v21: add range_start/range_end to sending_sessions, create session state/target tables
+    if (oldVersion < 21) {
+      await db.execute("ALTER TABLE sending_sessions ADD COLUMN range_start INTEGER DEFAULT 1");
+      await db.execute("ALTER TABLE sending_sessions ADD COLUMN range_end INTEGER DEFAULT 0");
+      await _createSendingSessionStateTable(db);
+      await _createSendingSessionTargetsTable(db);
     }
   }
 
@@ -316,6 +324,35 @@ class Migrations {
         created_at TEXT NOT NULL
       )
     ''');
+  }
+
+  static Future<void> _createSendingSessionStateTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sending_session_state(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        cursor_index INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sending_sessions(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_session_state_session ON sending_session_state(session_id)');
+  }
+
+  static Future<void> _createSendingSessionTargetsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sending_session_targets(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        lead_id INTEGER,
+        phone_number TEXT NOT NULL,
+        seq_index INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sending_sessions(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_session_targets_session ON sending_session_targets(session_id)');
   }
 
   static Future<void> _createIndexes(Database db) async {

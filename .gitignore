@@ -51,3 +51,6 @@ app.*.map.json
 *.jks
 *.keystore
 release-key-base64.txt
+
+# Supabase schema (should not be exposed)
+supabase/

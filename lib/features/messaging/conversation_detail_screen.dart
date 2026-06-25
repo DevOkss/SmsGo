@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:linkify/linkify.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants/app_theme.dart';
@@ -13,6 +12,7 @@ import '../../providers/messaging_provider.dart';
 import '../../repositories/conversation_repository.dart';
 import '../../services/sms_gateway.dart';
 import '../../services/sms_service.dart';
+import '../../services/device_sim_gateway.dart';
 
 class ConversationDetailScreen extends StatefulWidget {
   final Conversation conversation;
@@ -39,6 +39,7 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   bool _showJumpButton = false;
   String _selectedSim = 'SIM 1';
   String _sessionSimSlot = 'SIM 1';
+  Set<String> _availableSims = {'SIM 1', 'SIM 2'};
   StreamSubscription<Map<String, dynamic>>? _incomingSub;
   StreamSubscription<Map<String, dynamic>>? _sendResultSub;
 
@@ -68,6 +69,29 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   Future<void> _init() async {
     final db = await AppDatabase.instance.database;
     _repo = ConversationRepository(db);
+
+    // Load available SIMs
+    try {
+      final sims = await DeviceSimGateway.getDeviceSimStatus();
+      final available = <String>{};
+      for (final sim in sims) {
+        final slotIndex = sim['slotIndex'];
+        if (slotIndex is int) {
+          available.add('SIM ${slotIndex + 1}');
+        } else if (slotIndex is String) {
+          final idx = int.tryParse(slotIndex);
+          if (idx != null) available.add('SIM ${idx + 1}');
+        }
+      }
+      if (available.isNotEmpty && mounted) {
+        setState(() {
+          _availableSims = available;
+          if (!available.contains(_selectedSim)) {
+            _selectedSim = available.first;
+          }
+        });
+      }
+    } catch (_) {}
 
     // Load session state
     if (_sessionId != null) {
@@ -272,16 +296,23 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             tooltip: 'Select SIM',
             onSelected: (v) => setState(() => _selectedSim = v),
             itemBuilder: (_) => [
-              CheckedPopupMenuItem(
-                value: 'SIM 1',
-                checked: _selectedSim == 'SIM 1',
-                child: const Text('SIM 1'),
-              ),
-              CheckedPopupMenuItem(
-                value: 'SIM 2',
-                checked: _selectedSim == 'SIM 2',
-                child: const Text('SIM 2'),
-              ),
+              if (_availableSims.contains('SIM 1'))
+                CheckedPopupMenuItem(
+                  value: 'SIM 1',
+                  checked: _selectedSim == 'SIM 1',
+                  child: const Text('SIM 1'),
+                ),
+              if (_availableSims.contains('SIM 2'))
+                CheckedPopupMenuItem(
+                  value: 'SIM 2',
+                  checked: _selectedSim == 'SIM 2',
+                  child: const Text('SIM 2'),
+                ),
+              if (_availableSims.isEmpty)
+                const PopupMenuItem(
+                  enabled: false,
+                  child: Text('No SIM detected'),
+                ),
             ],
           ),
           const SizedBox(width: 4),
@@ -535,7 +566,6 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _buildLinkifiedText(BuildContext context) {
-    final elements = linkify(message, options: LinkifyOptions(humanize: false));
     final defaultColor = isOutgoing
         ? Colors.white
         : Theme.of(context).textTheme.bodyMedium?.color;
@@ -543,32 +573,55 @@ class _MessageBubble extends StatelessWidget {
         ? Colors.white70
         : Theme.of(context).colorScheme.primary;
 
-    return SelectableText.rich(
-      TextSpan(
-        children: elements.map((element) {
-          if (element is LinkableElement) {
-            return TextSpan(
-              text: element.text,
-              style: TextStyle(
-                color: linkColor,
-                fontSize: 14,
-                decoration: TextDecoration.underline,
-                fontWeight: FontWeight.w500,
-              ),
-              recognizer: TapGestureRecognizer()
-                ..onTap = () => _openLink(element.url),
-            );
-          }
-          return TextSpan(
-            text: element.text,
-            style: TextStyle(
-              color: defaultColor,
-              fontSize: 14,
-            ),
-          );
-        }).toList(),
-      ),
+    final urlRegex = RegExp(
+      r'(https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}(?:/[^\s]*)?)',
+      caseSensitive: false,
     );
+
+    final spans = <TextSpan>[];
+    int lastEnd = 0;
+
+    for (final match in urlRegex.allMatches(message)) {
+      // Add text before the link
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(
+          text: message.substring(lastEnd, match.start),
+          style: TextStyle(color: defaultColor, fontSize: 14),
+        ));
+      }
+      // Add the link
+      final url = match.group(0)!;
+      spans.add(TextSpan(
+        text: url,
+        style: TextStyle(
+          color: linkColor,
+          fontSize: 14,
+          decoration: TextDecoration.underline,
+          fontWeight: FontWeight.w500,
+        ),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () => _openLink(url),
+      ));
+      lastEnd = match.end;
+    }
+
+    // Add remaining text after last link
+    if (lastEnd < message.length) {
+      spans.add(TextSpan(
+        text: message.substring(lastEnd),
+        style: TextStyle(color: defaultColor, fontSize: 14),
+      ));
+    }
+
+    // If no links found, return plain text
+    if (spans.isEmpty) {
+      spans.add(TextSpan(
+        text: message,
+        style: TextStyle(color: defaultColor, fontSize: 14),
+      ));
+    }
+
+    return SelectableText.rich(TextSpan(children: spans));
   }
 
   @override

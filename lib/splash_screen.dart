@@ -7,7 +7,8 @@ import 'features/settings/widgets/update_dialog.dart';
 import 'features/settings/widgets/download_progress_widget.dart';
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  final VoidCallback? onFinished;
+  const SplashScreen({super.key, this.onFinished});
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -19,9 +20,16 @@ class _SplashScreenState extends State<SplashScreen> {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-    // Trigger initial update check after a short delay (non-blocking)
+    // Check for updates after a short delay (non-blocking)
     Timer(const Duration(milliseconds: 500), () {
       _checkForUpdates();
+    });
+
+    // Navigate away after splash duration
+    Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        widget.onFinished?.call();
+      }
     });
   }
 

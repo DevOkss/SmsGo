@@ -12,8 +12,12 @@ import 'providers/auth_provider.dart';
 import 'providers/license_provider.dart';
 
 import 'features/auth/auth_gate.dart';
+import 'splash_screen.dart';
 import 'database/supabase.dart';
 import 'services/device_fingerprint_service.dart';
+import 'services/background_service.dart';
+import 'services/notification_service.dart';
+import 'services/version_service.dart';
 
 final _lightTheme = AppTheme.light();
 final _darkTheme = AppTheme.dark();
@@ -30,21 +34,37 @@ void main() async {
   // Initialize device fingerprint
   await DeviceFingerprintService.instance.init();
 
+  // Initialize background service early so notification channel is ready
+  await BulkSendingBackgroundService.instance.init();
+
+  // Initialize notification service for incoming SMS notifications
+  NotificationService.instance.init();
+
+  // Initialize version service for reading package version info
+  await VersionService.instance.init();
+
   final themeProvider = ThemeProvider();
   await themeProvider.loadMode();
 
   runApp(SmsGoApp(themeProvider: themeProvider));
 }
 
-class SmsGoApp extends StatelessWidget {
+class SmsGoApp extends StatefulWidget {
   final ThemeProvider themeProvider;
   const SmsGoApp({super.key, required this.themeProvider});
+
+  @override
+  State<SmsGoApp> createState() => _SmsGoAppState();
+}
+
+class _SmsGoAppState extends State<SmsGoApp> {
+  bool _splashDone = false;
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider.value(value: themeProvider),
+        ChangeNotifierProvider.value(value: widget.themeProvider),
         ChangeNotifierProvider(create: (_) => CampaignProvider()),
         ChangeNotifierProvider(create: (_) => DashboardProvider()),
         ChangeNotifierProvider(create: (_) => MessagingProvider()),
@@ -61,7 +81,13 @@ class SmsGoApp extends StatelessWidget {
           theme: _lightTheme,
           darkTheme: _darkTheme,
           themeMode: themeMode,
-          home: const AuthGate(),
+          home: _splashDone
+              ? const AuthGate()
+              : SplashScreen(
+                  onFinished: () {
+                    setState(() => _splashDone = true);
+                  },
+                ),
         ),
       ),
     );

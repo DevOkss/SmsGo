@@ -205,6 +205,8 @@ class _ActiveSessionCard extends StatelessWidget {
             total: session.totalTargets,
             failed: session.failedCount,
             dispatched: dispatchedCount,
+            startIndex: session.rangeStart,
+            endIndex: session.rangeEnd,
           ),
         ],
       ),

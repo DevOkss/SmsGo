@@ -5,7 +5,6 @@ import '../../providers/auth_provider.dart';
 import '../../providers/license_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/license_service.dart';
-import '../../splash_screen.dart';
 import '../../main_shell.dart';
 import 'login_screen.dart';
 import 'license_activation_screen.dart';
@@ -27,7 +26,9 @@ class AuthGate extends StatelessWidget {
       builder: (context, auth, _) {
         switch (auth.status) {
           case AuthStatus.uninitialized:
-            return const SplashScreen();
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
           case AuthStatus.unauthenticated:
             if (auth.emailNotConfirmed && auth.pendingVerificationEmail != null) {
               return OtpVerificationScreen(
@@ -54,7 +55,9 @@ class _LicenseGate extends StatelessWidget {
       builder: (context, license, _) {
         switch (license.status) {
           case LicenseStatus.unknown:
-            return const SplashScreen();
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
           case LicenseStatus.active:
           case LicenseStatus.cached:
             return const MainShell();

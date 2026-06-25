@@ -15,6 +15,7 @@ import '../../repositories/lead_repository.dart';
 import '../../repositories/conversation_repository.dart';
 import '../../database/database.dart';
 import '../../services/sms_gateway.dart';
+import '../../services/sms_service.dart';
 
 import 'active_send_conversations_screen.dart';
 import 'conversations_screen.dart';
@@ -28,13 +29,22 @@ class MessagingScreen extends StatefulWidget {
 }
 
 class _MessagingScreenState extends State<MessagingScreen> {
+  Set<String> _availableSims = {'SIM 1', 'SIM 2'};
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<MessagingProvider>().loadActiveSessions();
       context.read<CampaignProvider>().load();
+      _loadAvailableSims();
     });
+  }
+
+  Future<void> _loadAvailableSims() async {
+    final sims = await context.read<MessagingProvider>().getAvailableSimSlots();
+    if (!mounted) return;
+    setState(() => _availableSims = sims);
   }
 
   @override
@@ -94,10 +104,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
             sessionsByCampaign.putIfAbsent(s.campaignId, () => []).add(s);
           }
 
-          // Determine available SIMs (not in use by active running sessions)
+          // Determine available SIMs (physically present and not in use by active running sessions)
           final activeSims = msgProvider.getActiveSims();
-          final sim1Available = !activeSims.contains('SIM 1');
-          final sim2Available = !activeSims.contains('SIM 2');
+          final sim1Available = _availableSims.contains('SIM 1') && !activeSims.contains('SIM 1');
+          final sim2Available = _availableSims.contains('SIM 2') && !activeSims.contains('SIM 2');
+          final sim1Present = _availableSims.contains('SIM 1');
+          final sim2Present = _availableSims.contains('SIM 2');
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -108,23 +120,25 @@ class _MessagingScreenState extends State<MessagingScreen> {
               Wrap(
                 spacing: 8,
                 children: [
-                  if (sim1Available)
+                  if (sim1Present)
                     Chip(
-                      avatar: const Icon(Icons.sim_card_rounded, size: 16, color: AppColors.success),
-                      label: const Text('SIM 1'),
-                      backgroundColor: AppColors.success.withValues(alpha: 0.1),
+                      avatar: Icon(Icons.sim_card_rounded, size: 16,
+                        color: sim1Available ? AppColors.success : Colors.orange),
+                      label: Text('SIM 1${sim1Available ? '' : ' (in use)'}'),
+                      backgroundColor: (sim1Available ? AppColors.success : Colors.orange).withValues(alpha: 0.1),
                     ),
-                  if (sim2Available)
+                  if (sim2Present)
                     Chip(
-                      avatar: const Icon(Icons.sim_card_rounded, size: 16, color: AppColors.success),
-                      label: const Text('SIM 2'),
-                      backgroundColor: AppColors.success.withValues(alpha: 0.1),
+                      avatar: Icon(Icons.sim_card_rounded, size: 16,
+                        color: sim2Available ? AppColors.success : Colors.orange),
+                      label: Text('SIM 2${sim2Available ? '' : ' (in use)'}'),
+                      backgroundColor: (sim2Available ? AppColors.success : Colors.orange).withValues(alpha: 0.1),
                     ),
-                  if (!sim1Available && !sim2Available)
-                    Text('No SIMs available — all in use',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.darkSubtext)),
-                  if (sim1Available || sim2Available)
-                    Text('${sim1Available && sim2Available ? '2' : '1'} available',
+                  if (!sim1Present && !sim2Present)
+                    Text('No SIM cards detected',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.error)),
+                  if (sim1Present || sim2Present)
+                    Text('${(sim1Available ? 1 : 0) + (sim2Available ? 1 : 0)} available',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.darkSubtext)),
                 ],
               ),
@@ -366,9 +380,16 @@ class _SessionCard extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall),
           ],
           const SizedBox(height: 4),
-          ProgressRow(sent: session.sent, total: session.total, failed: session.failed, dispatched: session.dispatched),
+          ProgressRow(
+            sent: session.sent,
+            total: session.total,
+            failed: session.failed,
+            dispatched: session.dispatched,
+            startIndex: session.rangeStart,
+            endIndex: session.rangeEnd,
+          ),
           const SizedBox(height: 4),
-          Text('${(session.total - session.dispatched).clamp(0, 1 << 60)} remaining',
+          Text('${(session.rangeEnd > 0 ? session.rangeEnd - (session.rangeStart + session.dispatched) : session.total - session.dispatched).clamp(0, 1 << 60)} remaining',
             style: Theme.of(context).textTheme.bodySmall),
           if (session.isCountingDown && session.countdownSeconds > 0) ...[
             const SizedBox(height: 6),
@@ -445,6 +466,8 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
   int _rangeStart = 1;
   int _rangeEnd = 0; // 0 means "all" (will be set to total on load)
   int _totalUnsent = 0;
+  Set<String> _availableSims = {'SIM 1', 'SIM 2'};
+  String _breakLinkMode = 'Globe';
 
   final Set<String> _selectedGroups = {};
   bool _testSent = false;
@@ -465,6 +488,7 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
       context.read<MessagingProvider>().loadMonitorNumbers();
       _loadNetworkCounts();
       _loadUnsentCount();
+      _loadAvailableSims();
     });
   }
 
@@ -485,8 +509,8 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
     super.didChangeDependencies();
     // Auto-switch SIM if current selection is disabled by another active session
     final activeSims = context.read<MessagingProvider>().getActiveSims();
-    final sim1Disabled = activeSims.contains('SIM 1');
-    final sim2Disabled = activeSims.contains('SIM 2');
+    final sim1Disabled = activeSims.contains('SIM 1') || !_availableSims.contains('SIM 1');
+    final sim2Disabled = activeSims.contains('SIM 2') || !_availableSims.contains('SIM 2');
 
     String newSlot = _simSlot;
     if (_simSlot == 'SIM 1' && sim1Disabled && !sim2Disabled) {
@@ -497,6 +521,22 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
     if (newSlot != _simSlot) {
       setState(() => _simSlot = newSlot);
     }
+  }
+
+  Future<void> _loadAvailableSims() async {
+    final sims = await context.read<MessagingProvider>().getAvailableSimSlots();
+    if (!mounted) return;
+    setState(() {
+      _availableSims = sims;
+      // Auto-switch if selected SIM is not available
+      if (!sims.contains(_simSlot)) {
+        if (sims.contains('SIM 1')) {
+          _simSlot = 'SIM 1';
+        } else if (sims.contains('SIM 2')) {
+          _simSlot = 'SIM 2';
+        }
+      }
+    });
   }
 
   @override
@@ -546,6 +586,8 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
               selected: _simSlot,
               sim1Disabled: sim1Disabled,
               sim2Disabled: sim2Disabled,
+              sim1Present: _availableSims.contains('SIM 1'),
+              sim2Present: _availableSims.contains('SIM 2'),
               onSelected: (v) => setState(() => _simSlot = v),
             ),
           ),
@@ -634,6 +676,24 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
               options: [AppConstants.categoryRotational, AppConstants.categorySequential],
               selected: _messageMode,
               onSelected: (v) => setState(() => _messageMode = v),
+            ),
+          ),
+
+          // Break Link Mode
+          _SettingSection(
+            title: 'Break Link',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Insert spaces after dots in URLs to bypass carrier link filtering.',
+                  style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 8),
+                AppChipGroup(
+                  options: ['none', 'Globe', 'All'],
+                  selected: _breakLinkMode,
+                  onSelected: (v) => setState(() => _breakLinkMode = v),
+                ),
+              ],
             ),
           ),
 
@@ -978,6 +1038,11 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
                   final leadName = leads.isNotEmpty ? (leads.first.name ?? '') : '';
                   testMessage = testMessage.replaceAll('{username}', leadName);
 
+                  // Break links based on mode
+                  if (_breakLinkMode != 'none') {
+                    testMessage = breakLinksInMessage(testMessage);
+                  }
+
                   // Create conversation (session_id=null) and outgoing message record
                   final db = await AppDatabase.instance.database;
                   final convRepo = ConversationRepository(db);
@@ -1086,6 +1151,7 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
         monitorNumber: _monitorNumber,
         rangeStart: _rangeStart,
         rangeEnd: _rangeEnd,
+        breakLinkMode: _breakLinkMode,
       );
 
       if (mounted) {
@@ -1112,6 +1178,8 @@ class _SimSelector extends StatelessWidget {
   final String selected;
   final bool sim1Disabled;
   final bool sim2Disabled;
+  final bool sim1Present;
+  final bool sim2Present;
   final ValueChanged<String> onSelected;
 
   const _SimSelector({
@@ -1119,6 +1187,8 @@ class _SimSelector extends StatelessWidget {
     required this.sim1Disabled,
     required this.sim2Disabled,
     required this.onSelected,
+    this.sim1Present = true,
+    this.sim2Present = true,
   });
 
   @override
@@ -1127,8 +1197,11 @@ class _SimSelector extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: [
-        _simChip('SIM 1', sim1Disabled),
-        _simChip('SIM 2', sim2Disabled),
+        if (sim1Present) _simChip('SIM 1', sim1Disabled),
+        if (sim2Present) _simChip('SIM 2', sim2Disabled),
+        if (!sim1Present && !sim2Present)
+          Text('No SIM cards detected',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.error)),
       ],
     );
   }

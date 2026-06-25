@@ -148,21 +148,34 @@ class ProgressRow extends StatelessWidget {
   final int total;
   final int failed;
   final int dispatched;
+  final int startIndex;
+  final int endIndex;
 
-  const ProgressRow({super.key, required this.sent, required this.total, required this.failed, this.dispatched = 0});
+  const ProgressRow({
+    super.key,
+    required this.sent,
+    required this.total,
+    required this.failed,
+    this.dispatched = 0,
+    this.startIndex = 1,
+    this.endIndex = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    final progressCount = dispatched > 0 ? dispatched : sent;
-    final progress = total > 0 ? progressCount / total : 0.0;
+    final useRange = endIndex > 0;
+    final displayTotal = useRange ? endIndex : total;
+    final displayCurrent = useRange ? (startIndex + (dispatched > 0 ? dispatched : sent)) : (dispatched > 0 ? dispatched : sent);
+    final progress = displayTotal > 0 ? displayCurrent / displayTotal : 0.0;
+    final remaining = (displayTotal - displayCurrent).clamp(0, 1 << 60);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('$sent / $total sent', style: Theme.of(context).textTheme.bodySmall),
+            Text('$displayCurrent / $displayTotal sent', style: Theme.of(context).textTheme.bodySmall),
             if (failed > 0)
               Text('$failed failed',
                 style: const TextStyle(color: AppColors.error, fontSize: 11)),
@@ -172,7 +185,7 @@ class ProgressRow extends StatelessWidget {
         ClipRRect(
           borderRadius: BorderRadius.circular(3),
           child: LinearProgressIndicator(
-            value: progress,
+            value: progress.clamp(0.0, 1.0),
             backgroundColor: primary.withValues(alpha: 0.1),
             valueColor: AlwaysStoppedAnimation<Color>(primary),
             minHeight: 4,

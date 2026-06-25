@@ -1,17 +1,39 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import '../models/lead.dart';
 import '../models/note.dart';
 import '../models/sending_session.dart';
+import '../models/sending_session_state.dart';
+import '../models/sending_session_target.dart';
 import '../repositories/lead_repository.dart';
 import '../repositories/campaign_repository.dart';
 import '../repositories/sending_session_repository.dart';
+import '../repositories/sending_session_state_repository.dart';
+import '../repositories/sending_session_target_repository.dart';
+import '../repositories/notes_repository.dart';
+import 'background_service.dart';
 
 
 import 'sms_gateway.dart';
 import '../database/database.dart';
 import '../repositories/conversation_repository.dart';
 import 'license_service.dart';
+
+/// Matches URLs in messages: with protocol, www prefix, or bare domain-like patterns.
+final _urlRegex = RegExp(
+  r'(https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}(?:/[^\s]*)?)',
+  caseSensitive: false,
+);
+
+/// Breaks links in a message by inserting spaces after dots.
+/// e.g. "visit google.com/page" -> "visit google . com/page"
+String breakLinksInMessage(String message) {
+  return message.replaceAllMapped(_urlRegex, (match) {
+    final url = match.group(0)!;
+    return url.replaceAll('.', ' . ');
+  });
+}
 
 typedef OnSendProgress = void Function(int sent, int failed, int total, {String lastMessage, int dispatched});
 
@@ -333,6 +355,8 @@ class SmsService {
 
   final _leadRepo = LeadRepository();
   final _sessionRepo = SendingSessionRepository();
+  final _sessionStateRepo = SendingSessionStateRepository();
+  final _sessionTargetRepo = SendingSessionTargetRepository();
   final _campaignRepo = CampaignRepository();
   final _random = Random();
 
@@ -374,6 +398,7 @@ class SmsService {
     required List<Lead> targets,
     OnSendProgress? onProgress,
     void Function(int sessionId)? onSessionCreated,
+    String breakLinkMode = 'none',
   }) async {
     // License guard: block SMS sending if license is not active
     final licenseStatus = await LicenseService.instance.validate();
@@ -388,6 +413,27 @@ class SmsService {
         createdAt: DateTime.now().toIso8601String(),
       ),
     );
+
+    // Persist target list for resume after app restart
+    final now = DateTime.now().toIso8601String();
+    final sessionTargets = targets.asMap().entries.map((entry) =>
+      SendingSessionTarget(
+        sessionId: sessionId,
+        leadId: entry.value.id,
+        phoneNumber: entry.value.phoneNumber,
+        seqIndex: entry.key,
+        createdAt: now,
+      ),
+    ).toList();
+    await _sessionTargetRepo.insertMany(sessionTargets);
+
+    // Initialize cursor state
+    await _sessionStateRepo.upsert(SendingSessionState(
+      sessionId: sessionId,
+      cursorIndex: 0,
+      createdAt: now,
+      updatedAt: now,
+    ));
 
     // Notify caller of session ID immediately so it can track progress
     onSessionCreated?.call(sessionId);
@@ -452,7 +498,17 @@ class SmsService {
         _timers.remove(sessionId);
         _msgIndex.remove(sessionId);
         stopFailureTimeout(sessionId);
+
+        // Clean up persisted state
+        await _sessionStateRepo.deleteBySession(sessionId);
+        await _sessionTargetRepo.deleteBySession(sessionId);
+
         await _sessionRepo.complete(sessionId);
+
+        // Remove from foreground notification tracker (stops service if none left)
+        try {
+          BulkSendingBackgroundService.instance.removeSession(sessionId);
+        } catch (_) {}
         onProgress?.call(sent, failed, targets.length, lastMessage: '', dispatched: targets.length);
         // Emit completion event
         try {
@@ -482,6 +538,14 @@ class SmsService {
       // Replace {username} placeholder with lead name
       final leadName = lead.name ?? '';
       message = message.replaceAll('{username}', leadName);
+
+      // Break links based on mode
+      if (breakLinkMode != 'none') {
+        final shouldBreak = breakLinkMode == 'All' || lead.network == 'Globe';
+        if (shouldBreak) {
+          message = breakLinksInMessage(message);
+        }
+      }
 
       // Get pre-created conversation for this lead
       final convId = conversationMap[lead.phoneNumber];
@@ -539,23 +603,45 @@ class SmsService {
         session.copyWith(id: sessionId, sentCount: sent, failedCount: failed, totalTargets: targets.length),
       );
 
+      // Persist cursor for resume after app restart
+      final cursorTime = DateTime.now().toIso8601String();
+      await _sessionStateRepo.upsert(SendingSessionState(
+        sessionId: sessionId,
+        cursorIndex: idx,
+        createdAt: cursorTime,
+        updatedAt: cursorTime,
+      ));
+
       onProgress?.call(sent, failed, targets.length, lastMessage: message, dispatched: idx);
 
+      // Update foreground notification
+      try {
+        BulkSendingBackgroundService.instance.updateSession(
+          sessionId: sessionId,
+          sent: sent,
+          total: targets.length,
+        );
+      } catch (_) {}
+  
       // Send progress SMS to monitor number after N messages
+      // Use idx (dispatched count) instead of sent (DB-confirmed) for timely notifications
+      debugPrint('[ProgressNotify] check: progressNotifyAfter=${session.progressNotifyAfter}, monitorNumber=${session.monitorNumber}, idx=$idx, modulo=${session.progressNotifyAfter > 0 ? idx % session.progressNotifyAfter : 'N/A'}');
       if (session.progressNotifyAfter > 0 &&
           session.monitorNumber != null &&
           session.monitorNumber!.isNotEmpty &&
-          sent > 0 &&
-          sent % session.progressNotifyAfter == 0) {
-        final progressMsg = 'Sent $sent: $message';
+          idx > 0 &&
+          idx % session.progressNotifyAfter == 0) {
+        final progressMsg = 'Sent $idx of ${targets.length}: $message';
+        debugPrint('[ProgressNotify] SENDING progress SMS to ${session.monitorNumber}: $progressMsg');
         try {
           await SmsGateway.sendSms(
             to: session.monitorNumber!,
             message: progressMsg,
             simSlot: _simSlotToIndex(session.simSlot),
           );
-        } catch (_) {
-          // Don't fail the session if progress notification fails
+          debugPrint('[ProgressNotify] SUCCESS');
+        } catch (e) {
+          debugPrint('[ProgressNotify] FAILED to send to ${session.monitorNumber}: $e');
         }
       }
 
@@ -648,6 +734,18 @@ class SmsService {
     // Start failure timeout for messages stuck in 'sending'
     startFailureTimeout(sessionId);
 
+    // Start foreground service for background sending
+    try {
+      final campaignName = await _getCampaignName(session.campaignId);
+      BulkSendingBackgroundService.instance.addSession(
+        sessionId: sessionId,
+        campaignName: campaignName,
+        simSlot: session.simSlot,
+        sent: 0,
+        total: targets.length,
+      );
+    } catch (_) {}
+
     return sessionId;
 
   }
@@ -661,20 +759,341 @@ class SmsService {
     await _sessionRepo.pause(sessionId, nextSendAtIso: now.toIso8601String());
   }
 
-  Future<void> resumeSession(int sessionId) async {
+  Future<void> resumeSession(int sessionId, {String breakLinkMode = 'Globe'}) async {
     // Mark DB state first.
     final now = DateTime.now();
     await _sessionRepo.resume(sessionId, nextSendAtIso: now.toIso8601String());
 
     // Resume the in-memory timer loop (only works if this session was started in the current runtime).
     final loop = _sendLoops[sessionId];
-    if (loop == null) return;
+    if (loop != null) {
+      if (_timers.containsKey(sessionId)) return;
+      await loop();
+      return;
+    }
 
-    // If a timer already exists, don't duplicate.
+    // If no in-memory loop (app restarted), try to resume from persisted state
+    await resumeSessionFromPersistedState(sessionId, breakLinkMode: breakLinkMode);
+  }
+
+  /// Resume a session from persisted state after app restart.
+  /// Loads cursor index and targets from DB, then restarts the send loop.
+  Future<void> resumeSessionFromPersistedState(int sessionId, {String breakLinkMode = 'Globe'}) async {
+    // Already running? Skip.
     if (_timers.containsKey(sessionId)) return;
 
-    await loop();
+    // Load session from DB
+    final db = await AppDatabase.instance.database;
+    final sessRows = await db.query('sending_sessions', where: 'id = ?', whereArgs: [sessionId], limit: 1);
+    if (sessRows.isEmpty) return;
+    final sessRow = sessRows.first;
+    final running = sessRow['running'] as int? ?? 0;
+    final isPaused = sessRow['paused'] as int? ?? 0;
+    if (running == 0 || isPaused == 1) return;
 
+    // Load cursor state
+    final state = await _sessionStateRepo.getBySession(sessionId);
+    final cursorIndex = state?.cursorIndex ?? 0;
+
+    // Load persisted targets
+    final persistTargets = await _sessionTargetRepo.getBySession(sessionId);
+    if (persistTargets.isEmpty) return;
+
+    // Reconstruct Lead objects from persisted targets (we only need phone numbers and IDs)
+    final targets = persistTargets.map((t) => Lead(
+      id: t.leadId,
+      campaignId: sessRow['campaign_id'] as int,
+      phoneNumber: t.phoneNumber,
+      name: null,
+      network: 'All',
+    )).toList().sublist(cursorIndex);
+
+    if (targets.isEmpty) return;
+
+    // Reconstruct session model
+    final session = SendingSession.fromMap(sessRow);
+
+    // Load messages from selected groups
+    final allNotes = <Note>[];
+    if (session.selectedGroups.isNotEmpty) {
+      final notesRepo = NoteRepository();
+      for (final group in session.selectedGroupsList) {
+        final notes = await notesRepo.getByGroup(group);
+        allNotes.addAll(notes);
+      }
+    }
+    if (allNotes.isEmpty) return;
+
+    List<Note> messages;
+    if (session.messageMode == 'sequential') {
+      messages = [];
+      for (final group in session.selectedGroupsList) {
+        final groupNotes = allNotes.where((n) => n.groupName == group).toList();
+        messages.addAll(groupNotes);
+      }
+    } else {
+      messages = List.from(allNotes)..shuffle(Random());
+    }
+
+    // Resume sending from cursor
+    _msgIndex[sessionId] = 0;
+    int sent = 0;
+    int failed = 0;
+    int idx = 0;
+
+    final convRepo = ConversationRepository(db);
+
+    // Rebuild conversation map from existing conversations
+    final conversationMap = <String, int>{};
+    final phoneNumbers = targets.map((l) => l.phoneNumber).toList();
+    if (phoneNumbers.isNotEmpty) {
+      final placeholders = phoneNumbers.map((_) => '?').join(',');
+      final existingConvs = await db.query(
+        'conversations',
+        columns: ['id', 'phone_number'],
+        where: 'campaign_id = ? AND phone_number IN ($placeholders)',
+        whereArgs: [session.campaignId, ...phoneNumbers],
+      );
+      for (final conv in existingConvs) {
+        conversationMap[conv['phone_number'] as String] = conv['id'] as int;
+      }
+    }
+
+    late void Function() scheduleNext;
+
+    Future<void> sendNext() async {
+      if (idx >= targets.length) {
+        final finalCounts = await _queryActualCounts(db, sessionId);
+        sent = finalCounts['sent']!;
+        failed = finalCounts['failed']!;
+        await db.update('sending_sessions', {
+          'sent_count': sent,
+          'failed_count': failed,
+          'total_targets': session.totalTargets,
+        }, where: 'id = ?', whereArgs: [sessionId]);
+        await _campaignRepo.updateCounts(session.campaignId);
+        _timers.remove(sessionId);
+        _msgIndex.remove(sessionId);
+        stopFailureTimeout(sessionId);
+        await _sessionStateRepo.deleteBySession(sessionId);
+        await _sessionTargetRepo.deleteBySession(sessionId);
+        await _sessionRepo.complete(sessionId);
+
+        // Remove from foreground notification tracker (stops service if none left)
+        try {
+          BulkSendingBackgroundService.instance.removeSession(sessionId);
+        } catch (_) {}
+
+        try {
+          _sendEventController.add({
+            "phone": "",
+            "success": true,
+            "sessionId": sessionId,
+            "completed": true,
+          });
+        } catch (_) {}
+        return;
+      }
+
+      final lead = targets[idx];
+      idx++;
+
+      final msgIdx = session.messageMode == 'sequential'
+          ? (_msgIndex[sessionId]! % messages.length)
+          : (idx % messages.length);
+      var message = messages[msgIdx].content;
+      if (session.messageMode == 'sequential') {
+        _msgIndex[sessionId] = _msgIndex[sessionId]! + 1;
+      }
+
+      final leadName = lead.name ?? '';
+      message = message.replaceAll('{username}', leadName);
+
+      // Break links based on mode
+      if (breakLinkMode != 'none') {
+        final shouldBreak = breakLinkMode == 'All' || lead.network == 'Globe';
+        if (shouldBreak) {
+          message = breakLinksInMessage(message);
+        }
+      }
+
+      final convId = conversationMap[lead.phoneNumber];
+
+      int? msgDbId;
+      if (convId != null) {
+        msgDbId = await convRepo.addMessage(convId, 'out', message, status: 'sending', simSlot: session.simSlot, sessionId: sessionId);
+      }
+
+      try {
+        _sendEventController.add({
+          "phone": lead.phoneNumber,
+          "success": null,
+          "sessionId": sessionId,
+          "status": "sending",
+        });
+      } catch (_) {}
+
+      bool sendAccepted = false;
+      try {
+        await SmsGateway.sendSms(
+          to: lead.phoneNumber,
+          message: message,
+          simSlot: _simSlotToIndex(session.simSlot),
+        );
+        sendAccepted = true;
+      } catch (_) {
+        sendAccepted = false;
+      }
+
+      if (!sendAccepted) {
+        if (msgDbId != null) {
+          await convRepo.updateMessageStatus(msgDbId, 'failed');
+        }
+        try {
+          _sendEventController.add({
+            "phone": lead.phoneNumber,
+            "success": false,
+            "sessionId": sessionId,
+            "status": "failed",
+          });
+        } catch (_) {}
+      }
+
+      final actualCounts = await _queryActualCounts(db, sessionId);
+      sent = actualCounts['sent']!;
+      failed = actualCounts['failed']!;
+
+      await _sessionRepo.update(
+        session.copyWith(id: sessionId, sentCount: sent, failedCount: failed),
+      );
+
+      // Persist cursor for resume
+      final cursorTime = DateTime.now().toIso8601String();
+      await _sessionStateRepo.upsert(SendingSessionState(
+        sessionId: sessionId,
+        cursorIndex: cursorIndex + idx,
+        createdAt: cursorTime,
+        updatedAt: cursorTime,
+      ));
+
+      // Update foreground notification
+      try {
+        BulkSendingBackgroundService.instance.updateSession(
+          sessionId: sessionId,
+          sent: sent,
+          total: session.totalTargets,
+        );
+      } catch (_) {}
+
+      // Send progress SMS to monitor number
+      debugPrint('[ProgressNotify][Resume] check: progressNotifyAfter=${session.progressNotifyAfter}, monitorNumber=${session.monitorNumber}, idx=$idx, modulo=${session.progressNotifyAfter > 0 ? idx % session.progressNotifyAfter : 'N/A'}');
+      if (session.progressNotifyAfter > 0 &&
+          session.monitorNumber != null &&
+          session.monitorNumber!.isNotEmpty &&
+          idx > 0 &&
+          idx % session.progressNotifyAfter == 0) {
+        final progressMsg = 'Sent ${cursorIndex + idx} of ${session.totalTargets}: $message';
+        debugPrint('[ProgressNotify][Resume] SENDING progress SMS to ${session.monitorNumber}: $progressMsg');
+        try {
+          await SmsGateway.sendSms(
+            to: session.monitorNumber!,
+            message: progressMsg,
+            simSlot: _simSlotToIndex(session.simSlot),
+          );
+          debugPrint('[ProgressNotify][Resume] SUCCESS');
+        } catch (e) {
+          debugPrint('[ProgressNotify][Resume] FAILED to send to ${session.monitorNumber}: $e');
+        }
+      }
+
+      scheduleNext();
+    }
+
+    scheduleNext = () {
+      final intervalMin = min(session.sendIntervalMin, session.sendIntervalMax);
+      final intervalMax = max(session.sendIntervalMin, session.sendIntervalMax);
+      final interval = intervalMin + _random.nextInt(intervalMax - intervalMin + 1);
+
+      int rest = 0;
+      if (session.restEnabled && session.restSeconds > 0) {
+        if (session.restAfterCount > 0) {
+          if (idx > 0 && idx % session.restAfterCount == 0) {
+            rest = session.restSeconds;
+          }
+        } else {
+          rest = session.restSeconds;
+        }
+      }
+
+      if (rest > 0) {
+        try {
+          _sendEventController.add({
+            "phone": "",
+            "success": true,
+            "sessionId": sessionId,
+            "resting": true,
+            "restSeconds": rest,
+          });
+        } catch (_) {}
+      }
+
+      final totalWait = interval + rest;
+      final nextSendAt = DateTime.now().add(Duration(seconds: totalWait)).toIso8601String();
+      try {
+        _sendEventController.add({
+          "phone": "",
+          "success": true,
+          "sessionId": sessionId,
+          "countdown": true,
+          "intervalSeconds": interval,
+          "restSeconds": rest,
+          "nextSendAt": nextSendAt,
+          "totalWait": totalWait,
+        });
+      } catch (_) {}
+
+      _timers[sessionId] = Timer(Duration(seconds: totalWait), () async {
+        if (rest > 0) {
+          try {
+            _sendEventController.add({
+              "phone": "",
+              "success": true,
+              "sessionId": sessionId,
+              "resting": false,
+            });
+          } catch (_) {}
+        }
+        final rows = await db.query(
+          'sending_sessions',
+          where: 'id = ?',
+          whereArgs: [sessionId],
+          limit: 1,
+        );
+        final paused = rows.isNotEmpty ? (rows.first['paused'] ?? 0) == 1 : false;
+        if (paused) return;
+        await sendNext();
+      });
+    };
+
+    _sendLoops[sessionId] = () async {
+      if (idx >= targets.length) return;
+      scheduleNext();
+    };
+
+    // Add to foreground notification tracker
+    try {
+      final campaignName = await _getCampaignName(session.campaignId);
+      BulkSendingBackgroundService.instance.addSession(
+        sessionId: sessionId,
+        campaignName: campaignName,
+        simSlot: session.simSlot,
+        sent: cursorIndex,
+        total: session.totalTargets,
+      );
+    } catch (_) {}
+
+    scheduleNext();
+    startFailureTimeout(sessionId);
   }
 
 
@@ -705,6 +1124,15 @@ class SmsService {
     _msgIndex.remove(sessionId);
     _sendLoops.remove(sessionId);
     await _sessionRepo.stop(sessionId);
+
+    // Clean up persisted state
+    await _sessionStateRepo.deleteBySession(sessionId);
+    await _sessionTargetRepo.deleteBySession(sessionId);
+
+    // Remove from foreground notification tracker (stops service if none left)
+    try {
+      BulkSendingBackgroundService.instance.removeSession(sessionId);
+    } catch (_) {}
   }
 
 
@@ -719,6 +1147,20 @@ class SmsService {
     _timeoutTimers.clear();
     _msgIndex.clear();
     _sendLoops.clear();
+    try {
+      BulkSendingBackgroundService.instance.stopService();
+    } catch (_) {}
+  }
+
+
+
+  Future<String> _getCampaignName(int campaignId) async {
+    try {
+      final db = await AppDatabase.instance.database;
+      final rows = await db.query('campaigns', where: 'id = ?', whereArgs: [campaignId], limit: 1);
+      if (rows.isNotEmpty) return rows.first['name'] as String? ?? 'Campaign #$campaignId';
+    } catch (_) {}
+    return 'Campaign #$campaignId';
   }
 
   /// Query actual sent/failed counts from conversation_messages for a session.

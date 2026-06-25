@@ -22,6 +22,8 @@ class SendingSession {
   final int progressNotifyAfter; // send progress SMS to monitor after N messages (0 = disabled)
   final String? monitorNumber;
   final String selectedGroups; // comma-separated group names
+  final int rangeStart;
+  final int rangeEnd;
   final String createdAt;
   final String? endedAt;
 
@@ -48,6 +50,8 @@ class SendingSession {
     this.progressNotifyAfter = 0,
     this.monitorNumber,
     this.selectedGroups = '',
+    this.rangeStart = 1,
+    this.rangeEnd = 0,
     required this.createdAt,
     this.endedAt,
   })  : sendIntervalMin = sendIntervalMin ?? sendInterval,
@@ -79,6 +83,8 @@ class SendingSession {
         progressNotifyAfter: map['progress_notify_after'] ?? 0,
         monitorNumber: map['monitor_number'],
         selectedGroups: map['selected_groups'] ?? '',
+        rangeStart: map['range_start'] ?? 1,
+        rangeEnd: map['range_end'] ?? 0,
         createdAt: map['created_at'],
         endedAt: map['ended_at'],
       );
@@ -106,6 +112,8 @@ class SendingSession {
         'progress_notify_after': progressNotifyAfter,
         'monitor_number': monitorNumber,
         'selected_groups': selectedGroups,
+        'range_start': rangeStart,
+        'range_end': rangeEnd,
         'created_at': createdAt,
         'ended_at': endedAt,
       };
@@ -135,6 +143,8 @@ class SendingSession {
     int? progressNotifyAfter,
     String? monitorNumber,
     String? selectedGroups,
+    int? rangeStart,
+    int? rangeEnd,
     String? createdAt,
     String? endedAt,
   }) => SendingSession(
@@ -160,6 +170,8 @@ class SendingSession {
         progressNotifyAfter: progressNotifyAfter ?? this.progressNotifyAfter,
         monitorNumber: monitorNumber ?? this.monitorNumber,
         selectedGroups: selectedGroups ?? this.selectedGroups,
+        rangeStart: rangeStart ?? this.rangeStart,
+        rangeEnd: rangeEnd ?? this.rangeEnd,
         createdAt: createdAt ?? this.createdAt,
         endedAt: endedAt ?? this.endedAt,
       );

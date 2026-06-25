@@ -25,6 +25,8 @@ class SessionProgress {
   int restSeconds;
   int restRemaining;
   int nextSendCountdown;
+  int rangeStart;
+  int rangeEnd;
 
   SessionProgress({
     required this.sessionId,
@@ -42,6 +44,8 @@ class SessionProgress {
     this.restSeconds = 0,
     this.restRemaining = 0,
     this.nextSendCountdown = 0,
+    this.rangeStart = 1,
+    this.rangeEnd = 0,
   });
 
   bool get isDone => completed || stopped || !running;
@@ -169,6 +173,8 @@ class ActiveSendProvider extends ChangeNotifier {
           completed: running == 0 && isStopped == 0,
           stopped: isStopped == 1,
           paused: isPaused == 1 && running == 1,
+          rangeStart: row['range_start'] as int? ?? 1,
+          rangeEnd: row['range_end'] as int? ?? 0,
         ));
       }
 
@@ -191,7 +197,12 @@ class ActiveSendProvider extends ChangeNotifier {
 
       // Check if this event belongs to any session in our campaign
       final sessIdx = sessions.indexWhere((s) => s.sessionId == sessId);
-      if (sessIdx < 0) return;
+      if (sessIdx < 0) {
+        // Session not found - it may have been created after this provider initialized
+        // Reload sessions to pick it up
+        _debouncedReloadSessions();
+        return;
+      }
 
       final sess = sessions[sessIdx];
 
@@ -265,8 +276,14 @@ class ActiveSendProvider extends ChangeNotifier {
         _pendingStatuses[phoneKey] = status;
         _findAndReplacePlaceholder(placeholder);
         if (status == 'sending') sess.dispatched++;
-        if (status == 'sent') sess.sent++;
-        if (status == 'failed') sess.failed++;
+        if (status == 'sent') {
+          sess.sent++;
+          sess.dispatched = sess.sent + sess.failed;
+        }
+        if (status == 'failed') {
+          sess.failed++;
+          sess.dispatched = sess.sent + sess.failed;
+        }
         notifyListeners();
         return;
       }
@@ -279,8 +296,14 @@ class ActiveSendProvider extends ChangeNotifier {
         _pendingStatuses[phoneKey] = status;
       }
       if (status == 'sending') sess.dispatched++;
-      if (status == 'sent') sess.sent++;
-      if (status == 'failed') sess.failed++;
+      if (status == 'sent') {
+        sess.sent++;
+        sess.dispatched = sess.sent + sess.failed;
+      }
+      if (status == 'failed') {
+        sess.failed++;
+        sess.dispatched = sess.sent + sess.failed;
+      }
       _debouncedReloadConversations();
       return;
     } catch (_) {}
@@ -291,6 +314,76 @@ class ActiveSendProvider extends ChangeNotifier {
     _reloadDebounce = Timer(const Duration(milliseconds: 500), () {
       reloadConversations();
     });
+  }
+
+  void _debouncedReloadSessions() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 300), () {
+      reloadSessions();
+    });
+  }
+
+  Future<void> reloadSessions() async {
+    try {
+      final db = await _dbFuture;
+      final sessRows = await db.query(
+        'sending_sessions',
+        where: 'campaign_id = ?',
+        whereArgs: [campaignId],
+        orderBy: 'id DESC',
+      );
+      final sessionIds = sessRows.map((r) => r['id'] as int).toList();
+      final Map<int, Map<String, int>> sessionCounts = {};
+      if (sessionIds.isNotEmpty) {
+        final placeholders = sessionIds.map((_) => '?').join(',');
+        final countRows = await db.rawQuery('''
+          SELECT session_id, status, COUNT(*) as cnt
+          FROM conversation_messages
+          WHERE session_id IN ($placeholders) AND direction = 'out'
+          GROUP BY session_id, status
+        ''', sessionIds);
+        for (final row in countRows) {
+          final sessId = row['session_id'] as int;
+          final status = row['status'] as String?;
+          final cnt = row['cnt'] as int? ?? 0;
+          sessionCounts.putIfAbsent(sessId, () => {'sent': 0, 'failed': 0, 'dispatched': 0});
+          sessionCounts[sessId]!['dispatched'] = sessionCounts[sessId]!['dispatched']! + cnt;
+          if (status == 'sent') sessionCounts[sessId]!['sent'] = cnt;
+          if (status == 'failed') sessionCounts[sessId]!['failed'] = cnt;
+        }
+      }
+
+      final stoppedIds = <int>{};
+      for (final s in sessions) {
+        if (s.stopped) stoppedIds.add(s.sessionId);
+      }
+
+      sessions = [];
+      for (final row in sessRows) {
+        final sessId = row['id'] as int;
+        final running = row['running'] as int? ?? 1;
+        final isPaused = row['paused'] as int? ?? 0;
+        final isStopped = row['stopped'] as int? ?? 0;
+        final counts = sessionCounts[sessId] ?? {'sent': 0, 'failed': 0, 'dispatched': 0};
+        final wasStopped = isStopped == 1 || stoppedIds.contains(sessId);
+        sessions.add(SessionProgress(
+          sessionId: sessId,
+          simSlot: row['sim_slot'] as String? ?? 'SIM 1',
+          monitorNumber: row['monitor_number'] as String?,
+          sent: counts['sent']!,
+          failed: counts['failed']!,
+          dispatched: counts['dispatched']!,
+          total: row['total_targets'] as int? ?? 0,
+          running: running == 1,
+          completed: running == 0 && !wasStopped,
+          stopped: wasStopped,
+          paused: isPaused == 1 && running == 1,
+          rangeStart: row['range_start'] as int? ?? 1,
+          rangeEnd: row['range_end'] as int? ?? 0,
+        ));
+      }
+    } catch (_) {}
+    notifyListeners();
   }
 
   Future<void> _findAndReplacePlaceholder(Conversation placeholder) async {
@@ -440,6 +533,8 @@ class ActiveSendProvider extends ChangeNotifier {
           completed: running == 0 && !wasStopped,
           stopped: wasStopped,
           paused: isPaused == 1 && running == 1,
+          rangeStart: row['range_start'] as int? ?? 1,
+          rangeEnd: row['range_end'] as int? ?? 0,
         ));
       }
 

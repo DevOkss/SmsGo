@@ -224,8 +224,11 @@ class _SessionProgressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final progress = session.total > 0 ? session.dispatched / session.total : 0.0;
-    final remaining = (session.total - session.dispatched).clamp(0, 1 << 60);
+    final useRange = session.rangeEnd > 0;
+    final displayTotal = useRange ? session.rangeEnd : session.total;
+    final displayCurrent = useRange ? (session.rangeStart + session.dispatched) : session.dispatched;
+    final progress = displayTotal > 0 ? displayCurrent / displayTotal : 0.0;
+    final remaining = (displayTotal - displayCurrent).clamp(0, 1 << 60);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
@@ -323,7 +326,7 @@ class _SessionProgressCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${session.sent} / ${session.total} sent',
+              Text('${useRange ? session.rangeStart + session.sent : session.sent} / $displayTotal sent',
                 style: Theme.of(context).textTheme.bodySmall),
               if (session.failed > 0)
                 Text('${session.failed} failed',
@@ -334,7 +337,7 @@ class _SessionProgressCard extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(3),
             child: LinearProgressIndicator(
-              value: progress,
+              value: progress.clamp(0.0, 1.0),
               backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
               valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
               minHeight: 4,
