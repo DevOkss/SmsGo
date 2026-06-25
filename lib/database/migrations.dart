@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 class Migrations {
-  static const int currentVersion = 21;
+  static const int currentVersion = 22;
 
 
 
@@ -16,6 +16,8 @@ class Migrations {
     await _createMonitorNumbersTable(db);
     await _createConversationsTable(db);
     await _createConversationMessagesTable(db);
+    await _createSendingSessionStateTable(db);
+    await _createSendingSessionTargetsTable(db);
     await _createIndexes(db);
   }
 
@@ -163,6 +165,12 @@ class Migrations {
       await _createSendingSessionStateTable(db);
       await _createSendingSessionTargetsTable(db);
     }
+
+    // v22: ensure session state/target tables exist (they were missing from onCreate before)
+    if (oldVersion >= 21 && oldVersion < 22) {
+      await _createSendingSessionStateTable(db);
+      await _createSendingSessionTargetsTable(db);
+    }
   }
 
 
@@ -249,7 +257,9 @@ class Migrations {
         created_at TEXT NOT NULL,
         ended_at TEXT,
         stopped INTEGER DEFAULT 0,
-        removed INTEGER DEFAULT 0
+        removed INTEGER DEFAULT 0,
+        range_start INTEGER DEFAULT 1,
+        range_end INTEGER DEFAULT 0
       )
     ''');
   }

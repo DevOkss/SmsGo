@@ -101,7 +101,7 @@ class _NotesScreenState extends State<NotesScreen> {
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Group Name',
-            hintText: 'e.g. 1SJL, Promo A',
+            hintText: 'Company',
           ),
           textCapitalization: TextCapitalization.words,
           onSubmitted: (_) => _createGroup(ctx, ctrl),
