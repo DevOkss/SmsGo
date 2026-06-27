@@ -29,46 +29,6 @@ Bulk SMS marketing app for Android. Promote your business by sending personalize
 | Notifications | flutter_local_notifications |
 | Native SMS | Android SmsManager via MethodChannel |
 
-## Getting Started
-
-### Prerequisites
-
-- Flutter SDK ^3.12.2
-- Android Studio or VS Code with Android SDK
-- A Supabase project (for auth and license)
-
-### Setup
-
-1. Clone the repo:
-   ```bash
-   git clone <repo-url>
-   cd smsgo
-   ```
-
-2. Create a `.env` file in the project root:
-   ```
-   SUPABASE_URL=your_supabase_url
-   SUPABASE_ANON_KEY=your_supabase_anon_key
-   ```
-
-3. Install dependencies:
-   ```bash
-   flutter pub get
-   ```
-
-4. Run the app:
-   ```bash
-   flutter run
-   ```
-
-### Build
-
-```bash
-flutter build apk --release
-```
-
-The APK will be in `build/app/outputs/flutter-apk/app-release.apk`.
-
 ## Permissions
 
 The app requires the following Android permissions:
