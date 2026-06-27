@@ -37,6 +37,35 @@ String breakLinksInMessage(String message) {
 
 typedef OnSendProgress = void Function(int sent, int failed, int total, {String lastMessage, int dispatched});
 
+/// Per-session dispatch configuration, replacing the old closure-based approach.
+class _SessionConfig {
+  final SendingSession session;
+  final List<Lead> targets;
+  final List<Note> messages;
+  final Map<String, int> conversationMap;
+  final ConversationRepository convRepo;
+  final dynamic db;
+  final String breakLinkMode;
+  final OnSendProgress? onProgress;
+  final int cursorOffset; // base cursor for resumed sessions (0 for new sessions)
+  int msgIndex = 0;
+  int sent = 0;
+  int failed = 0;
+  bool completing = false;
+
+  _SessionConfig({
+    required this.session,
+    required this.targets,
+    required this.messages,
+    required this.conversationMap,
+    required this.convRepo,
+    required this.db,
+    this.breakLinkMode = 'none',
+    this.onProgress,
+    this.cursorOffset = 0,
+  });
+}
+
 class SmsService {
   static SmsService? _instance;
   static SmsService get instance => _instance ??= SmsService._();
@@ -45,6 +74,9 @@ class SmsService {
     _syncPendingNativeReplies();
     _listenForSendResults();
   }
+
+  /// Maximum concurrent in-flight SMS sends per session.
+  static const int _maxConcurrentSms = 2;
 
   // Broadcast stream for per-send events (phone/status)
   final _sendEventController = StreamController<Map<String, dynamic>>.broadcast();
@@ -179,6 +211,11 @@ class SmsService {
               'sessionId': effectiveSessionId,
               'status': newStatus,
             });
+
+            // Trigger next dispatch for bulk sending sessions
+            if (effectiveSessionId != null && _sessionConfigs.containsKey(effectiveSessionId)) {
+              _onMessageComplete(effectiveSessionId);
+            }
           }
         }
       } catch (_) {}
@@ -316,9 +353,7 @@ class SmsService {
 
       // Fallback: create a standalone conversation (no campaign/session)
       // This ensures incoming SMS from ANY number is always captured
-      if (convId == null) {
-        convId = await convRepo.createConversation(null, from);
-      }
+      convId ??= await convRepo.createConversation(null, from);
     }
 
     if (convId != null) {
@@ -352,7 +387,6 @@ class SmsService {
 
 
 
-
   final _leadRepo = LeadRepository();
   final _sessionRepo = SendingSessionRepository();
   final _sessionStateRepo = SendingSessionStateRepository();
@@ -366,20 +400,24 @@ class SmsService {
 
 
 
-  // Active sessions: sessionId -> Timer
+  // Active sessions: sessionId -> Timer (for delayed dispatch after completion)
   final Map<int, Timer> _timers = {};
 
-  // sequential tracking: sessionId -> index into message list
-  final Map<int, int> _msgIndex = {};
+  // Concurrency tracking: sessionId -> in-flight send count
+  final Map<int, int> _inFlightCount = {};
 
-  // Shared send loops for resume/pause.
-  final Map<int, Future<void> Function()> _sendLoops = {};
+  // Next target index per session: sessionId -> index into targets list
+  final Map<int, int> _nextTargetIndex = {};
+
+  // Per-session dispatch config (replaces _sendLoops and closure-based sendNext)
+  final Map<int, _SessionConfig> _sessionConfigs = {};
 
   // Failure timeout timers (separate from send timers)
   final Map<int, Timer> _timeoutTimers = {};
 
-
-  bool isRunning(int sessionId) => _timers.containsKey(sessionId);
+  /// Whether a session has an active send loop (timer or in-flight messages).
+  bool isRunning(int sessionId) =>
+      _timers.containsKey(sessionId) || (_inFlightCount[sessionId] ?? 0) > 0;
 
 
 
@@ -391,6 +429,351 @@ class SmsService {
   }
 
   int _bothSimCounter = 0;
+
+  // ---------------------------------------------------------------------------
+  // Core dispatch model: fixed-concurrency (max 2 in-flight per session)
+  // ---------------------------------------------------------------------------
+
+  /// Dispatch the next message for a session, respecting the concurrency limit.
+  /// Called on session start, on resume, and when a slot opens up after completion.
+  Future<void> _dispatchNext(int sessionId) async {
+    final config = _sessionConfigs[sessionId];
+    if (config == null) return;
+
+    final inFlight = _inFlightCount[sessionId] ?? 0;
+    if (inFlight >= _maxConcurrentSms) return;
+
+    final nextIdx = _nextTargetIndex[sessionId] ?? 0;
+    if (nextIdx >= config.targets.length) {
+      // All targets dispatched — complete if all in-flight are done
+      if (inFlight == 0 && !config.completing) {
+        await _completeSession(sessionId, config);
+      }
+      return;
+    }
+
+    // Check if session is paused (DB guard, same as original)
+    final rows = await config.db.query(
+      'sending_sessions',
+      where: 'id = ?',
+      whereArgs: [sessionId],
+      limit: 1,
+    );
+    final paused = rows.isNotEmpty ? (rows.first['paused'] ?? 0) == 1 : false;
+    if (paused) return;
+
+    // Claim slot SYNCHRONOUSLY before any async work to prevent race conditions
+    _inFlightCount[sessionId] = inFlight + 1;
+    _nextTargetIndex[sessionId] = nextIdx + 1;
+
+    final lead = config.targets[nextIdx];
+    final session = config.session;
+
+    // Select message using target index for rotation
+    final msgIdx = session.messageMode == 'sequential'
+        ? (config.msgIndex % config.messages.length)
+        : ((nextIdx + 1) % config.messages.length);
+    var message = config.messages[msgIdx].content;
+    if (session.messageMode == 'sequential') {
+      config.msgIndex++;
+    }
+
+    // Replace {username} placeholder with lead name
+    final leadName = lead.name ?? '';
+    message = message.replaceAll('{username}', leadName);
+
+    // Break links based on mode
+    if (config.breakLinkMode != 'none') {
+      final shouldBreak = config.breakLinkMode == 'All' || lead.network == 'Globe';
+      if (shouldBreak) {
+        message = breakLinksInMessage(message);
+      }
+    }
+
+    // Get pre-created conversation for this lead
+    final convId = config.conversationMap[lead.phoneNumber];
+
+    // Add outgoing message with 'sending' status
+    int? msgDbId;
+    if (convId != null) {
+      msgDbId = await config.convRepo.addMessage(convId, 'out', message, status: 'sending', simSlot: session.simSlot, sessionId: sessionId);
+    }
+
+    // Emit 'sending' event so UI shows real-time status immediately
+    try {
+      _sendEventController.add({
+        "phone": lead.phoneNumber,
+        "success": null,
+        "sessionId": sessionId,
+        "status": "sending",
+      });
+    } catch (_) {}
+
+    bool sendAccepted = false;
+    try {
+      await SmsGateway.sendSms(
+        to: lead.phoneNumber,
+        message: message,
+        simSlot: _simSlotToIndex(session.simSlot),
+      );
+      sendAccepted = true;
+    } catch (_) {
+      sendAccepted = false;
+    }
+
+    // If sendSms threw a platform exception, mark as failed immediately and release slot.
+    // Otherwise, _listenForSendResults will update the status and call _onMessageComplete.
+    if (!sendAccepted) {
+      if (msgDbId != null) {
+        await config.convRepo.updateMessageStatus(msgDbId, 'failed');
+      }
+      try {
+        _sendEventController.add({
+          "phone": lead.phoneNumber,
+          "success": false,
+          "sessionId": sessionId,
+          "status": "failed",
+        });
+      } catch (_) {}
+
+      // Release the slot since this send failed immediately
+      _inFlightCount[sessionId] = (_inFlightCount[sessionId] ?? 1) - 1;
+
+      // Update session counts
+      final actualCounts = await _queryActualCounts(config.db, sessionId);
+      config.sent = actualCounts['sent']!;
+      config.failed = actualCounts['failed']!;
+      await _sessionRepo.update(
+        session.copyWith(id: sessionId, sentCount: config.sent, failedCount: config.failed, totalTargets: config.targets.length),
+      );
+
+      _onProgressUpdate(sessionId, config, message, nextIdx);
+
+      // Immediately try to dispatch next (don't wait for interval on failure)
+      if (_inFlightCount[sessionId]! < _maxConcurrentSms) {
+        _dispatchNext(sessionId);
+      }
+      return;
+    }
+
+    // Update session counts and persist cursor
+    final actualCounts = await _queryActualCounts(config.db, sessionId);
+    config.sent = actualCounts['sent']!;
+    config.failed = actualCounts['failed']!;
+
+    await _sessionRepo.update(
+      session.copyWith(id: sessionId, sentCount: config.sent, failedCount: config.failed, totalTargets: config.targets.length),
+    );
+
+    // Persist cursor for resume after app restart
+    final cursorTime = DateTime.now().toIso8601String();
+    await _sessionStateRepo.upsert(SendingSessionState(
+      sessionId: sessionId,
+      cursorIndex: config.cursorOffset + _nextTargetIndex[sessionId]!,
+      createdAt: cursorTime,
+      updatedAt: cursorTime,
+    ));
+
+    _onProgressUpdate(sessionId, config, message, nextIdx);
+
+    // Update foreground notification
+    try {
+      BulkSendingBackgroundService.instance.updateSession(
+        sessionId: sessionId,
+        sent: config.sent,
+        total: config.targets.length,
+      );
+    } catch (_) {}
+
+    // Send progress SMS to monitor number after N successful sends
+    debugPrint('[ProgressNotify] check: progressNotifyAfter=${session.progressNotifyAfter}, monitorNumber=${session.monitorNumber}, sent=${config.sent}, modulo=${session.progressNotifyAfter > 0 ? config.sent % session.progressNotifyAfter : 'N/A'}');
+    if (session.progressNotifyAfter > 0 &&
+        session.monitorNumber != null &&
+        session.monitorNumber!.isNotEmpty &&
+        config.sent > 0 &&
+        config.sent % session.progressNotifyAfter == 0) {
+      final progressMsg = 'Sent ${config.sent} of ${config.targets.length}: $message';
+      debugPrint('[ProgressNotify] SENDING progress SMS to ${session.monitorNumber}: $progressMsg');
+      try {
+        await SmsGateway.sendSms(
+          to: session.monitorNumber!,
+          message: progressMsg,
+          simSlot: _simSlotToIndex(session.simSlot),
+        );
+        debugPrint('[ProgressNotify] SUCCESS');
+      } catch (e) {
+        debugPrint('[ProgressNotify] FAILED to send to ${session.monitorNumber}: $e');
+      }
+    }
+  }
+
+  /// Called when a message completes (success or failure) or times out.
+  /// Decrements in-flight count and schedules the next dispatch.
+  void _onMessageComplete(int sessionId) {
+    if (!_sessionConfigs.containsKey(sessionId)) return;
+
+    // Decrement in-flight count (clamp to 0 for safety)
+    final current = _inFlightCount[sessionId] ?? 0;
+    if (current > 0) {
+      _inFlightCount[sessionId] = current - 1;
+    }
+
+    final config = _sessionConfigs[sessionId]!;
+    final session = config.session;
+    final nextIdx = _nextTargetIndex[sessionId] ?? 0;
+
+    // All dispatched and all complete — finish the session
+    if (nextIdx >= config.targets.length && (_inFlightCount[sessionId] ?? 0) == 0) {
+      if (!config.completing) {
+        _completeSession(sessionId, config);
+      }
+      return;
+    }
+
+    // If all targets are already dispatched, just wait for remaining in-flight
+    if (nextIdx >= config.targets.length) return;
+
+    // Calculate wait time (interval + rest)
+    final intervalMin = min(session.sendIntervalMin, session.sendIntervalMax);
+    final intervalMax = max(session.sendIntervalMin, session.sendIntervalMax);
+    var delay = intervalMin + _random.nextInt(intervalMax - intervalMin + 1);
+
+    // Rest logic: restAfterCount takes priority (rest after N sends),
+    // otherwise if restEnabled, rest after every send.
+    int rest = 0;
+    if (session.restEnabled && session.restSeconds > 0) {
+      if (session.restAfterCount > 0) {
+        if (nextIdx > 0 && nextIdx % session.restAfterCount == 0) {
+          rest = session.restSeconds;
+        }
+      } else {
+        rest = session.restSeconds;
+      }
+    }
+
+    // Emit rest event if resting
+    if (rest > 0) {
+      try {
+        _sendEventController.add({
+          "phone": "",
+          "success": true,
+          "sessionId": sessionId,
+          "resting": true,
+          "restSeconds": rest,
+        });
+      } catch (_) {}
+    }
+
+    // Emit countdown info so UI can show timer
+    final totalWait = delay + rest;
+    final nextSendAt = DateTime.now().add(Duration(seconds: totalWait)).toIso8601String();
+    try {
+      _sendEventController.add({
+        "phone": "",
+        "success": true,
+        "sessionId": sessionId,
+        "countdown": true,
+        "intervalSeconds": delay,
+        "restSeconds": rest,
+        "nextSendAt": nextSendAt,
+        "totalWait": totalWait,
+      });
+    } catch (_) {}
+
+    // Schedule delayed dispatch
+    _timers[sessionId]?.cancel();
+    _timers[sessionId] = Timer(Duration(seconds: totalWait), () async {
+      // Emit rest complete event
+      if (rest > 0) {
+        try {
+          _sendEventController.add({
+            "phone": "",
+            "success": true,
+            "sessionId": sessionId,
+            "resting": false,
+          });
+        } catch (_) {}
+      }
+
+      // Guard: check pause before dispatching
+      final rows = await config.db.query(
+        'sending_sessions',
+        where: 'id = ?',
+        whereArgs: [sessionId],
+        limit: 1,
+      );
+      final paused = rows.isNotEmpty ? (rows.first['paused'] ?? 0) == 1 : false;
+      if (paused) return;
+
+      _dispatchNext(sessionId);
+    });
+  }
+
+  /// Common progress callback helper.
+  void _onProgressUpdate(int sessionId, _SessionConfig config, String message, int targetIdx) {
+    final dispatchedCount = _nextTargetIndex[sessionId] ?? 0;
+    config.onProgress?.call(
+      config.sent,
+      config.failed,
+      config.targets.length,
+      lastMessage: message,
+      dispatched: dispatchedCount,
+    );
+  }
+
+  /// Complete a session: update DB, clean up, emit events.
+  Future<void> _completeSession(int sessionId, _SessionConfig config) async {
+    config.completing = true;
+
+    // Query actual counts from DB before completing
+    final finalCounts = await _queryActualCounts(config.db, sessionId);
+    config.sent = finalCounts['sent']!;
+    config.failed = finalCounts['failed']!;
+
+    // Save final counts to session DB
+    await config.db.update('sending_sessions', {
+      'sent_count': config.sent,
+      'failed_count': config.failed,
+      'total_targets': config.targets.length,
+    }, where: 'id = ?', whereArgs: [sessionId]);
+
+    // Update campaign counts on completion
+    await _campaignRepo.updateCounts(config.session.campaignId);
+
+    // Clean up in-memory state
+    _timers.remove(sessionId);
+    _inFlightCount.remove(sessionId);
+    _nextTargetIndex.remove(sessionId);
+    _sessionConfigs.remove(sessionId);
+    stopFailureTimeout(sessionId);
+
+    // Clean up persisted state
+    await _sessionStateRepo.deleteBySession(sessionId);
+    await _sessionTargetRepo.deleteBySession(sessionId);
+
+    await _sessionRepo.complete(sessionId);
+
+    // Remove from foreground notification tracker (stops service if none left)
+    try {
+      BulkSendingBackgroundService.instance.removeSession(sessionId);
+    } catch (_) {}
+
+    config.onProgress?.call(config.sent, config.failed, config.targets.length, lastMessage: '', dispatched: config.targets.length);
+
+    // Emit completion event
+    try {
+      _sendEventController.add({
+        "phone": "",
+        "success": true,
+        "sessionId": sessionId,
+        "completed": true,
+      });
+    } catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session lifecycle
+  // ---------------------------------------------------------------------------
 
   Future<int> startSession({
     required SendingSession session,
@@ -438,11 +821,6 @@ class SmsService {
     // Notify caller of session ID immediately so it can track progress
     onSessionCreated?.call(sessionId);
 
-    _msgIndex[sessionId] = 0;
-    int sent = 0;
-    int failed = 0;
-    int idx = 0;
-
     // Conversation repo for creating conversations during send
     final db = await AppDatabase.instance.database;
     final convRepo = ConversationRepository(db);
@@ -477,259 +855,19 @@ class SmsService {
       conversationMap[lead.phoneNumber] = convId;
     }
 
-    late void Function() scheduleNext;
-
-    Future<void> sendNext() async {
-      if (idx >= targets.length) {
-        // Query actual counts from DB before completing
-        final finalCounts = await _queryActualCounts(db, sessionId);
-        sent = finalCounts['sent']!;
-        failed = finalCounts['failed']!;
-        // Save final counts to session DB
-        await db.update('sending_sessions', {
-          'sent_count': sent,
-          'failed_count': failed,
-          'total_targets': targets.length,
-        }, where: 'id = ?', whereArgs: [sessionId]);
-
-        // Update campaign counts on completion
-        await _campaignRepo.updateCounts(session.campaignId);
-
-        _timers.remove(sessionId);
-        _msgIndex.remove(sessionId);
-        stopFailureTimeout(sessionId);
-
-        // Clean up persisted state
-        await _sessionStateRepo.deleteBySession(sessionId);
-        await _sessionTargetRepo.deleteBySession(sessionId);
-
-        await _sessionRepo.complete(sessionId);
-
-        // Remove from foreground notification tracker (stops service if none left)
-        try {
-          BulkSendingBackgroundService.instance.removeSession(sessionId);
-        } catch (_) {}
-        onProgress?.call(sent, failed, targets.length, lastMessage: '', dispatched: targets.length);
-        // Emit completion event
-        try {
-          _sendEventController.add({
-            "phone": "",
-            "success": true,
-            "sessionId": sessionId,
-            "completed": true,
-          });
-        } catch (_) {}
-        return;
-      }
-
-      final lead = targets[idx];
-      idx++;
-
-      // Select message using idx (target index) for rotation — not `sent` which is
-      // optimistic and may not reflect actual delivery status.
-      final msgIdx = session.messageMode == 'sequential'
-          ? (_msgIndex[sessionId]! % messages.length)
-          : (idx % messages.length);
-      var message = messages[msgIdx].content;
-      if (session.messageMode == 'sequential') {
-        _msgIndex[sessionId] = _msgIndex[sessionId]! + 1;
-      }
-
-      // Replace {username} placeholder with lead name
-      final leadName = lead.name ?? '';
-      message = message.replaceAll('{username}', leadName);
-
-      // Break links based on mode
-      if (breakLinkMode != 'none') {
-        final shouldBreak = breakLinkMode == 'All' || lead.network == 'Globe';
-        if (shouldBreak) {
-          message = breakLinksInMessage(message);
-        }
-      }
-
-      // Get pre-created conversation for this lead
-      final convId = conversationMap[lead.phoneNumber];
-
-      // Add outgoing message with 'sending' status
-      int? msgDbId;
-      if (convId != null) {
-        msgDbId = await convRepo.addMessage(convId, 'out', message, status: 'sending', simSlot: session.simSlot, sessionId: sessionId);
-      }
-
-      // Emit 'sending' event so UI shows real-time status immediately
-      try {
-        _sendEventController.add({
-          "phone": lead.phoneNumber,
-          "success": null,
-          "sessionId": sessionId,
-          "status": "sending",
-        });
-      } catch (_) {}
-
-      bool sendAccepted = false;
-      try {
-        await SmsGateway.sendSms(
-          to: lead.phoneNumber,
-          message: message,
-          simSlot: _simSlotToIndex(session.simSlot),
-        );
-        sendAccepted = true;
-      } catch (_) {
-        sendAccepted = false;
-      }
-
-      // If sendSms threw a platform exception, mark as failed immediately.
-      // Otherwise, SentReceiver will update the status to 'sent' or 'failed'.
-      if (!sendAccepted) {
-        if (msgDbId != null) {
-          await convRepo.updateMessageStatus(msgDbId, 'failed');
-        }
-        try {
-          _sendEventController.add({
-            "phone": lead.phoneNumber,
-            "success": false,
-            "sessionId": sessionId,
-            "status": "failed",
-          });
-        } catch (_) {}
-      }
-
-      // Query DB for actual sent/failed counts (source of truth from conversation_messages)
-      final actualCounts = await _queryActualCounts(db, sessionId);
-      sent = actualCounts['sent']!;
-      failed = actualCounts['failed']!;
-
-      await _sessionRepo.update(
-        session.copyWith(id: sessionId, sentCount: sent, failedCount: failed, totalTargets: targets.length),
-      );
-
-      // Persist cursor for resume after app restart
-      final cursorTime = DateTime.now().toIso8601String();
-      await _sessionStateRepo.upsert(SendingSessionState(
-        sessionId: sessionId,
-        cursorIndex: idx,
-        createdAt: cursorTime,
-        updatedAt: cursorTime,
-      ));
-
-      onProgress?.call(sent, failed, targets.length, lastMessage: message, dispatched: idx);
-
-      // Update foreground notification
-      try {
-        BulkSendingBackgroundService.instance.updateSession(
-          sessionId: sessionId,
-          sent: sent,
-          total: targets.length,
-        );
-      } catch (_) {}
-  
-      // Send progress SMS to monitor number after N messages
-      // Use idx (dispatched count) instead of sent (DB-confirmed) for timely notifications
-      debugPrint('[ProgressNotify] check: progressNotifyAfter=${session.progressNotifyAfter}, monitorNumber=${session.monitorNumber}, idx=$idx, modulo=${session.progressNotifyAfter > 0 ? idx % session.progressNotifyAfter : 'N/A'}');
-      if (session.progressNotifyAfter > 0 &&
-          session.monitorNumber != null &&
-          session.monitorNumber!.isNotEmpty &&
-          idx > 0 &&
-          idx % session.progressNotifyAfter == 0) {
-        final progressMsg = 'Sent $idx of ${targets.length}: $message';
-        debugPrint('[ProgressNotify] SENDING progress SMS to ${session.monitorNumber}: $progressMsg');
-        try {
-          await SmsGateway.sendSms(
-            to: session.monitorNumber!,
-            message: progressMsg,
-            simSlot: _simSlotToIndex(session.simSlot),
-          );
-          debugPrint('[ProgressNotify] SUCCESS');
-        } catch (e) {
-          debugPrint('[ProgressNotify] FAILED to send to ${session.monitorNumber}: $e');
-        }
-      }
-
-      scheduleNext();
-    }
-
-    scheduleNext = () {
-      final intervalMin = min(session.sendIntervalMin, session.sendIntervalMax);
-      final intervalMax = max(session.sendIntervalMin, session.sendIntervalMax);
-      final interval = intervalMin + _random.nextInt(intervalMax - intervalMin + 1);
-
-      // Rest logic: restAfterCount takes priority (rest after N sends),
-      // otherwise if restEnabled, rest after every send.
-      int rest = 0;
-      if (session.restEnabled && session.restSeconds > 0) {
-        if (session.restAfterCount > 0) {
-          // Rest only after every N sends
-          if (idx > 0 && idx % session.restAfterCount == 0) {
-            rest = session.restSeconds;
-          }
-        } else {
-          // Rest after every send
-          rest = session.restSeconds;
-        }
-      }
-
-      // Emit rest event if resting
-      if (rest > 0) {
-        try {
-          _sendEventController.add({
-            "phone": "",
-            "success": true,
-            "sessionId": sessionId,
-            "resting": true,
-            "restSeconds": rest,
-          });
-        } catch (_) {}
-      }
-
-      // Emit countdown info so UI can show timer
-      final totalWait = interval + rest;
-      final nextSendAt = DateTime.now().add(Duration(seconds: totalWait)).toIso8601String();
-      try {
-        _sendEventController.add({
-          "phone": "",
-          "success": true,
-          "sessionId": sessionId,
-          "countdown": true,
-          "intervalSeconds": interval,
-          "restSeconds": rest,
-          "nextSendAt": nextSendAt,
-          "totalWait": totalWait,
-        });
-      } catch (_) {}
-
-      _timers[sessionId] = Timer(Duration(seconds: totalWait), () async {
-        // Emit rest complete event
-        if (rest > 0) {
-          try {
-            _sendEventController.add({
-              "phone": "",
-              "success": true,
-              "sessionId": sessionId,
-              "resting": false,
-            });
-          } catch (_) {}
-        }
-        // Prevent auto-send after pause (handles race where timer fired right before pause()).
-        final rows = await db.query(
-          'sending_sessions',
-          where: 'id = ?',
-          whereArgs: [sessionId],
-          limit: 1,
-        );
-        final paused = rows.isNotEmpty ? (rows.first['paused'] ?? 0) == 1 : false;
-        if (paused) return;
-        await sendNext();
-      });
-    };
-
-
-    // Store the in-memory resume loop.
-    _sendLoops[sessionId] = () async {
-      if (idx >= targets.length) return;
-      scheduleNext();
-    };
-
-    scheduleNext();
+    // Store session config for dispatch model
+    _sessionConfigs[sessionId] = _SessionConfig(
+      session: session,
+      targets: targets,
+      messages: messages,
+      conversationMap: conversationMap,
+      convRepo: convRepo,
+      db: db,
+      breakLinkMode: breakLinkMode,
+      onProgress: onProgress,
+    );
+    _inFlightCount[sessionId] = 0;
+    _nextTargetIndex[sessionId] = 0;
 
     // Start failure timeout for messages stuck in 'sending'
     startFailureTimeout(sessionId);
@@ -746,8 +884,11 @@ class SmsService {
       );
     } catch (_) {}
 
-    return sessionId;
+    // Dispatch first 2 messages (fills both concurrency slots)
+    await _dispatchNext(sessionId);
+    await _dispatchNext(sessionId);
 
+    return sessionId;
   }
 
   Future<void> pauseSession(int sessionId) async {
@@ -764,15 +905,16 @@ class SmsService {
     final now = DateTime.now();
     await _sessionRepo.resume(sessionId, nextSendAtIso: now.toIso8601String());
 
-    // Resume the in-memory timer loop (only works if this session was started in the current runtime).
-    final loop = _sendLoops[sessionId];
-    if (loop != null) {
+    // Resume the in-memory dispatch config (only works if this session was started in the current runtime).
+    if (_sessionConfigs.containsKey(sessionId)) {
       if (_timers.containsKey(sessionId)) return;
-      await loop();
+      // Refill concurrency slots
+      await _dispatchNext(sessionId);
+      await _dispatchNext(sessionId);
       return;
     }
 
-    // If no in-memory loop (app restarted), try to resume from persisted state
+    // If no in-memory config (app restarted), try to resume from persisted state
     await resumeSessionFromPersistedState(sessionId, breakLinkMode: breakLinkMode);
   }
 
@@ -780,7 +922,7 @@ class SmsService {
   /// Loads cursor index and targets from DB, then restarts the send loop.
   Future<void> resumeSessionFromPersistedState(int sessionId, {String breakLinkMode = 'Globe'}) async {
     // Already running? Skip.
-    if (_timers.containsKey(sessionId)) return;
+    if (_sessionConfigs.containsKey(sessionId)) return;
 
     // Load session from DB
     final db = await AppDatabase.instance.database;
@@ -800,14 +942,16 @@ class SmsService {
     if (persistTargets.isEmpty) return;
 
     // Reconstruct Lead objects from persisted targets (we only need phone numbers and IDs)
-    final targets = persistTargets.map((t) => Lead(
+    final allTargets = persistTargets.map((t) => Lead(
       id: t.leadId,
       campaignId: sessRow['campaign_id'] as int,
       phoneNumber: t.phoneNumber,
       name: null,
       network: 'All',
-    )).toList().sublist(cursorIndex);
+    )).toList();
 
+    // Slice targets from cursor position
+    final targets = allTargets.sublist(cursorIndex);
     if (targets.isEmpty) return;
 
     // Reconstruct session model
@@ -835,12 +979,6 @@ class SmsService {
       messages = List.from(allNotes)..shuffle(Random());
     }
 
-    // Resume sending from cursor
-    _msgIndex[sessionId] = 0;
-    int sent = 0;
-    int failed = 0;
-    int idx = 0;
-
     final convRepo = ConversationRepository(db);
 
     // Rebuild conversation map from existing conversations
@@ -859,226 +997,19 @@ class SmsService {
       }
     }
 
-    late void Function() scheduleNext;
-
-    Future<void> sendNext() async {
-      if (idx >= targets.length) {
-        final finalCounts = await _queryActualCounts(db, sessionId);
-        sent = finalCounts['sent']!;
-        failed = finalCounts['failed']!;
-        await db.update('sending_sessions', {
-          'sent_count': sent,
-          'failed_count': failed,
-          'total_targets': session.totalTargets,
-        }, where: 'id = ?', whereArgs: [sessionId]);
-        await _campaignRepo.updateCounts(session.campaignId);
-        _timers.remove(sessionId);
-        _msgIndex.remove(sessionId);
-        stopFailureTimeout(sessionId);
-        await _sessionStateRepo.deleteBySession(sessionId);
-        await _sessionTargetRepo.deleteBySession(sessionId);
-        await _sessionRepo.complete(sessionId);
-
-        // Remove from foreground notification tracker (stops service if none left)
-        try {
-          BulkSendingBackgroundService.instance.removeSession(sessionId);
-        } catch (_) {}
-
-        try {
-          _sendEventController.add({
-            "phone": "",
-            "success": true,
-            "sessionId": sessionId,
-            "completed": true,
-          });
-        } catch (_) {}
-        return;
-      }
-
-      final lead = targets[idx];
-      idx++;
-
-      final msgIdx = session.messageMode == 'sequential'
-          ? (_msgIndex[sessionId]! % messages.length)
-          : (idx % messages.length);
-      var message = messages[msgIdx].content;
-      if (session.messageMode == 'sequential') {
-        _msgIndex[sessionId] = _msgIndex[sessionId]! + 1;
-      }
-
-      final leadName = lead.name ?? '';
-      message = message.replaceAll('{username}', leadName);
-
-      // Break links based on mode
-      if (breakLinkMode != 'none') {
-        final shouldBreak = breakLinkMode == 'All' || lead.network == 'Globe';
-        if (shouldBreak) {
-          message = breakLinksInMessage(message);
-        }
-      }
-
-      final convId = conversationMap[lead.phoneNumber];
-
-      int? msgDbId;
-      if (convId != null) {
-        msgDbId = await convRepo.addMessage(convId, 'out', message, status: 'sending', simSlot: session.simSlot, sessionId: sessionId);
-      }
-
-      try {
-        _sendEventController.add({
-          "phone": lead.phoneNumber,
-          "success": null,
-          "sessionId": sessionId,
-          "status": "sending",
-        });
-      } catch (_) {}
-
-      bool sendAccepted = false;
-      try {
-        await SmsGateway.sendSms(
-          to: lead.phoneNumber,
-          message: message,
-          simSlot: _simSlotToIndex(session.simSlot),
-        );
-        sendAccepted = true;
-      } catch (_) {
-        sendAccepted = false;
-      }
-
-      if (!sendAccepted) {
-        if (msgDbId != null) {
-          await convRepo.updateMessageStatus(msgDbId, 'failed');
-        }
-        try {
-          _sendEventController.add({
-            "phone": lead.phoneNumber,
-            "success": false,
-            "sessionId": sessionId,
-            "status": "failed",
-          });
-        } catch (_) {}
-      }
-
-      final actualCounts = await _queryActualCounts(db, sessionId);
-      sent = actualCounts['sent']!;
-      failed = actualCounts['failed']!;
-
-      await _sessionRepo.update(
-        session.copyWith(id: sessionId, sentCount: sent, failedCount: failed),
-      );
-
-      // Persist cursor for resume
-      final cursorTime = DateTime.now().toIso8601String();
-      await _sessionStateRepo.upsert(SendingSessionState(
-        sessionId: sessionId,
-        cursorIndex: cursorIndex + idx,
-        createdAt: cursorTime,
-        updatedAt: cursorTime,
-      ));
-
-      // Update foreground notification
-      try {
-        BulkSendingBackgroundService.instance.updateSession(
-          sessionId: sessionId,
-          sent: sent,
-          total: session.totalTargets,
-        );
-      } catch (_) {}
-
-      // Send progress SMS to monitor number
-      debugPrint('[ProgressNotify][Resume] check: progressNotifyAfter=${session.progressNotifyAfter}, monitorNumber=${session.monitorNumber}, idx=$idx, modulo=${session.progressNotifyAfter > 0 ? idx % session.progressNotifyAfter : 'N/A'}');
-      if (session.progressNotifyAfter > 0 &&
-          session.monitorNumber != null &&
-          session.monitorNumber!.isNotEmpty &&
-          idx > 0 &&
-          idx % session.progressNotifyAfter == 0) {
-        final progressMsg = 'Sent ${cursorIndex + idx} of ${session.totalTargets}: $message';
-        debugPrint('[ProgressNotify][Resume] SENDING progress SMS to ${session.monitorNumber}: $progressMsg');
-        try {
-          await SmsGateway.sendSms(
-            to: session.monitorNumber!,
-            message: progressMsg,
-            simSlot: _simSlotToIndex(session.simSlot),
-          );
-          debugPrint('[ProgressNotify][Resume] SUCCESS');
-        } catch (e) {
-          debugPrint('[ProgressNotify][Resume] FAILED to send to ${session.monitorNumber}: $e');
-        }
-      }
-
-      scheduleNext();
-    }
-
-    scheduleNext = () {
-      final intervalMin = min(session.sendIntervalMin, session.sendIntervalMax);
-      final intervalMax = max(session.sendIntervalMin, session.sendIntervalMax);
-      final interval = intervalMin + _random.nextInt(intervalMax - intervalMin + 1);
-
-      int rest = 0;
-      if (session.restEnabled && session.restSeconds > 0) {
-        if (session.restAfterCount > 0) {
-          if (idx > 0 && idx % session.restAfterCount == 0) {
-            rest = session.restSeconds;
-          }
-        } else {
-          rest = session.restSeconds;
-        }
-      }
-
-      if (rest > 0) {
-        try {
-          _sendEventController.add({
-            "phone": "",
-            "success": true,
-            "sessionId": sessionId,
-            "resting": true,
-            "restSeconds": rest,
-          });
-        } catch (_) {}
-      }
-
-      final totalWait = interval + rest;
-      final nextSendAt = DateTime.now().add(Duration(seconds: totalWait)).toIso8601String();
-      try {
-        _sendEventController.add({
-          "phone": "",
-          "success": true,
-          "sessionId": sessionId,
-          "countdown": true,
-          "intervalSeconds": interval,
-          "restSeconds": rest,
-          "nextSendAt": nextSendAt,
-          "totalWait": totalWait,
-        });
-      } catch (_) {}
-
-      _timers[sessionId] = Timer(Duration(seconds: totalWait), () async {
-        if (rest > 0) {
-          try {
-            _sendEventController.add({
-              "phone": "",
-              "success": true,
-              "sessionId": sessionId,
-              "resting": false,
-            });
-          } catch (_) {}
-        }
-        final rows = await db.query(
-          'sending_sessions',
-          where: 'id = ?',
-          whereArgs: [sessionId],
-          limit: 1,
-        );
-        final paused = rows.isNotEmpty ? (rows.first['paused'] ?? 0) == 1 : false;
-        if (paused) return;
-        await sendNext();
-      });
-    };
-
-    _sendLoops[sessionId] = () async {
-      if (idx >= targets.length) return;
-      scheduleNext();
-    };
+    // Store session config for dispatch model
+    _sessionConfigs[sessionId] = _SessionConfig(
+      session: session,
+      targets: targets,
+      messages: messages,
+      conversationMap: conversationMap,
+      convRepo: convRepo,
+      db: db,
+      breakLinkMode: breakLinkMode,
+      cursorOffset: cursorIndex,
+    );
+    _inFlightCount[sessionId] = 0;
+    _nextTargetIndex[sessionId] = 0;
 
     // Add to foreground notification tracker
     try {
@@ -1092,13 +1023,12 @@ class SmsService {
       );
     } catch (_) {}
 
-    scheduleNext();
+    // Dispatch first 2 messages (fills both concurrency slots)
+    await _dispatchNext(sessionId);
+    await _dispatchNext(sessionId);
+
     startFailureTimeout(sessionId);
   }
-
-
-
-
 
   Future<void> stopSession(int sessionId) async {
     // Save current counts before stopping
@@ -1121,8 +1051,9 @@ class SmsService {
     _timers[sessionId]?.cancel();
     stopFailureTimeout(sessionId);
     _timers.remove(sessionId);
-    _msgIndex.remove(sessionId);
-    _sendLoops.remove(sessionId);
+    _inFlightCount.remove(sessionId);
+    _nextTargetIndex.remove(sessionId);
+    _sessionConfigs.remove(sessionId);
     await _sessionRepo.stop(sessionId);
 
     // Clean up persisted state
@@ -1145,8 +1076,9 @@ class SmsService {
     }
     _timers.clear();
     _timeoutTimers.clear();
-    _msgIndex.clear();
-    _sendLoops.clear();
+    _inFlightCount.clear();
+    _nextTargetIndex.clear();
+    _sessionConfigs.clear();
     try {
       BulkSendingBackgroundService.instance.stopService();
     } catch (_) {}
@@ -1238,6 +1170,16 @@ class SmsService {
               'failed_count': actualCounts['failed'],
             }, where: 'id = ?', whereArgs: [sessionId]);
           }
+
+          // Decrement in-flight count for each timed-out message and trigger next dispatch
+          if (_sessionConfigs.containsKey(sessionId)) {
+            for (final _ in stuck) {
+              final current = _inFlightCount[sessionId] ?? 0;
+              if (current > 0) _inFlightCount[sessionId] = current - 1;
+            }
+            _onMessageComplete(sessionId);
+          }
+
           // Notify messaging provider to reload
           try {
             _sendEventController.add({

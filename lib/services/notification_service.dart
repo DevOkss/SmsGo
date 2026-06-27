@@ -58,6 +58,7 @@ class NotificationService {
       fullScreenIntent: true,
       category: AndroidNotificationCategory.message,
       groupKey: 'sms_incoming_group',
+      when: DateTime.now().millisecondsSinceEpoch,
     );
     final details = NotificationDetails(android: androidDetails);
 

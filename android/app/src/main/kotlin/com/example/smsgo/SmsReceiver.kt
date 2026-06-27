@@ -148,6 +148,7 @@ class SmsReceiver : BroadcastReceiver() {
         .setVisibility(android.app.Notification.VISIBILITY_PUBLIC)
         .setAutoCancel(true)
         .setContentIntent(pendingIntent)
+        .setWhen(System.currentTimeMillis())
         .build()
 
       val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

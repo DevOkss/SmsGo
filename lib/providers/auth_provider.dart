@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/constants/error_utils.dart';
 import '../services/auth_service.dart';
 
 const _kPendingEmailKey = 'pending_verification_email';
@@ -125,7 +126,7 @@ class AuthProvider extends ChangeNotifier {
       return message;
     } catch (e) {
       debugPrint('[AuthProvider] signIn error: $e');
-      return 'An unexpected error occurred';
+      return friendlyError(e);
     }
   }
 

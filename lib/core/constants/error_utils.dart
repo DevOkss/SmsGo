@@ -2,7 +2,8 @@
 /// Shows "Connection Failed" for network errors, raw message otherwise.
 String friendlyError(Object e) {
   final msg = e.toString();
-  if (msg.contains('SocketException') ||
+  if (msg.contains('ClientException') ||
+      msg.contains('SocketException') ||
       msg.contains('Connection refused') ||
       msg.contains('Connection reset') ||
       msg.contains('Connection timed out') ||
