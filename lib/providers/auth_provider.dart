@@ -111,6 +111,11 @@ class AuthProvider extends ChangeNotifier {
   }) async {
     try {
       await _authService.signIn(email: email, password: password);
+      _status = AuthStatus.authenticated;
+      _emailNotConfirmed = false;
+      _pendingVerificationEmail = null;
+      await _clearPendingEmail();
+      notifyListeners();
       return null;
     } on AuthException catch (e) {
       if (e.message.contains('Email not confirmed')) {
@@ -160,8 +165,11 @@ class AuthProvider extends ChangeNotifier {
         token: token,
         type: type,
       );
+      _status = AuthStatus.authenticated;
       _emailNotConfirmed = false;
       _pendingVerificationEmail = null;
+      await _clearPendingEmail();
+      notifyListeners();
       return null;
     } on AuthException catch (e) {
       return e.message;

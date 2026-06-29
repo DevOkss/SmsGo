@@ -63,9 +63,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final msg = e.toString();
+        String message;
+        if (msg.contains('already registered') || msg.contains('already been registered')) {
+          message = 'This email is already registered. Please use a different email or sign in.';
+          debugPrint('Email already registered: ${_emailController.text.trim()}');
+        } else {
+          message = friendlyError(e);
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(friendlyError(e)),
+            content: Text(message),
             backgroundColor: AppColors.error,
           ),
         );

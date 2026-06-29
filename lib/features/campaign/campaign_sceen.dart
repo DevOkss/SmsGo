@@ -229,13 +229,6 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
                   ],
                 ),
               ),
-
-              if (result.errors.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text('Issues:', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                ...result.errors.take(5).map((e) => Text('• $e',
-                  style: const TextStyle(fontSize: 12, color: AppColors.error))),
-              ],
             ],
           ),
         ),

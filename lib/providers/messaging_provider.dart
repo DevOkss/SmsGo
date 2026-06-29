@@ -12,7 +12,6 @@ import '../repositories/monitor_number_repository.dart';
 import '../repositories/notes_repository.dart';
 import '../repositories/sending_session_repository.dart';
 import '../services/sms_service.dart';
-import '../services/license_service.dart';
 import '../services/device_sim_gateway.dart';
 
 class ActiveSend {
@@ -281,18 +280,15 @@ class MessagingProvider extends ChangeNotifier {
     int? rangeStart,
     int? rangeEnd,
     String breakLinkMode = 'none',
+    void Function(double progress, String status)? onSendingProgress,
   }) async {
-    // License guard: check before doing any work
-    final licenseStatus = await LicenseService.instance.validate();
-    if (licenseStatus != LicenseStatus.active && licenseStatus != LicenseStatus.cached) {
-      throw Exception('A valid license is required to send SMS. Please activate your license in Settings.');
-    }
-
+    onSendingProgress?.call(0.1, 'Loading targets...');
     final targets = await _leadRepo.getUnsent(campaign.id!, network: targetNetwork, rangeStart: rangeStart, rangeEnd: rangeEnd);
     if (targets.isEmpty) throw Exception('No unsent leads for this selection');
     if (selectedGroups.isEmpty) throw Exception('No message groups selected');
 
     // Load notes from selected groups
+    onSendingProgress?.call(0.35, 'Loading messages...');
     final allNotes = <Note>[];
     for (final group in selectedGroups) {
       final notes = await _notesRepo.getByGroup(group);
@@ -314,6 +310,7 @@ class MessagingProvider extends ChangeNotifier {
       messages = List.from(allNotes)..shuffle(Random());
     }
 
+    onSendingProgress?.call(0.45, 'Preparing session...');
     final session = SendingSession(
       campaignId: campaign.id!,
       simSlot: simSlot,
@@ -358,6 +355,7 @@ class MessagingProvider extends ChangeNotifier {
       messages: messages,
       targets: targets,
       breakLinkMode: breakLinkMode,
+      onSendingProgress: onSendingProgress,
       onSessionCreated: (id) {
         // Update the session ID on the ActiveSend object
         final idx = _active.indexOf(newSession);

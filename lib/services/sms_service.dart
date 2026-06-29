@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import '../core/constants/app_constants.dart';
 import '../models/lead.dart';
 import '../models/note.dart';
 import '../models/sending_session.dart';
@@ -18,7 +19,6 @@ import 'background_service.dart';
 import 'sms_gateway.dart';
 import '../database/database.dart';
 import '../repositories/conversation_repository.dart';
-import 'license_service.dart';
 
 /// Matches URLs in messages: with protocol, www prefix, or bare domain-like patterns.
 final _urlRegex = RegExp(
@@ -484,7 +484,7 @@ class SmsService {
 
     // Break links based on mode
     if (config.breakLinkMode != 'none') {
-      final shouldBreak = config.breakLinkMode == 'All' || lead.network == 'Globe';
+      final shouldBreak = config.breakLinkMode == 'All' || lead.network == AppConstants.networkGlobe;
       if (shouldBreak) {
         message = breakLinksInMessage(message);
       }
@@ -580,8 +580,8 @@ class SmsService {
     try {
       BulkSendingBackgroundService.instance.updateSession(
         sessionId: sessionId,
-        sent: config.sent,
-        total: config.targets.length,
+        sent: session.rangeStart + config.sent,
+        total: session.rangeEnd,
       );
     } catch (_) {}
 
@@ -592,7 +592,7 @@ class SmsService {
         session.monitorNumber!.isNotEmpty &&
         config.sent > 0 &&
         config.sent % session.progressNotifyAfter == 0) {
-      final progressMsg = 'Sent ${config.sent} of ${config.targets.length}: $message';
+      final progressMsg = 'Sent ${session.rangeStart + config.sent} of ${session.rangeEnd}: $message';
       debugPrint('[ProgressNotify] SENDING progress SMS to ${session.monitorNumber}: $progressMsg');
       try {
         await SmsGateway.sendSms(
@@ -782,13 +782,9 @@ class SmsService {
     OnSendProgress? onProgress,
     void Function(int sessionId)? onSessionCreated,
     String breakLinkMode = 'none',
+    void Function(double progress, String status)? onSendingProgress,
   }) async {
-    // License guard: block SMS sending if license is not active
-    final licenseStatus = await LicenseService.instance.validate();
-    if (licenseStatus != LicenseStatus.active && licenseStatus != LicenseStatus.cached) {
-      throw Exception('A valid license is required to send SMS. Please activate your license in Settings.');
-    }
-
+    onSendingProgress?.call(0.5, 'Saving session...');
     // Insert session record
     final sessionId = await _sessionRepo.create(
       session.copyWith(
@@ -808,6 +804,7 @@ class SmsService {
         createdAt: now,
       ),
     ).toList();
+    onSendingProgress?.call(0.6, 'Saving targets...');
     await _sessionTargetRepo.insertMany(sessionTargets);
 
     // Initialize cursor state
@@ -843,9 +840,11 @@ class SmsService {
       }
     }
 
+    onSendingProgress?.call(0.65, 'Creating conversations...');
     // Batch create missing conversations (individual inserts, no transaction to avoid DB lock)
     final missingLeads = targets.where((l) => !conversationMap.containsKey(l.phoneNumber)).toList();
-    for (final lead in missingLeads) {
+    for (int i = 0; i < missingLeads.length; i++) {
+      final lead = missingLeads[i];
       final convId = await convRepo.createConversation(
         sessionId,
         lead.phoneNumber,
@@ -853,6 +852,10 @@ class SmsService {
         campaignId: session.campaignId,
       );
       conversationMap[lead.phoneNumber] = convId;
+      onSendingProgress?.call(
+        0.65 + (i + 1) / missingLeads.length * 0.2,
+        'Creating conversations (${i + 1}/${missingLeads.length})...',
+      );
     }
 
     // Store session config for dispatch model
@@ -872,6 +875,7 @@ class SmsService {
     // Start failure timeout for messages stuck in 'sending'
     startFailureTimeout(sessionId);
 
+    onSendingProgress?.call(0.9, 'Starting send service...');
     // Start foreground service for background sending
     try {
       final campaignName = await _getCampaignName(session.campaignId);
@@ -879,11 +883,12 @@ class SmsService {
         sessionId: sessionId,
         campaignName: campaignName,
         simSlot: session.simSlot,
-        sent: 0,
-        total: targets.length,
+        sent: session.rangeStart,
+        total: session.rangeEnd,
       );
     } catch (_) {}
 
+    onSendingProgress?.call(0.95, 'Preparing first messages...');
     // Dispatch first 2 messages (fills both concurrency slots)
     await _dispatchNext(sessionId);
     await _dispatchNext(sessionId);
@@ -1018,8 +1023,8 @@ class SmsService {
         sessionId: sessionId,
         campaignName: campaignName,
         simSlot: session.simSlot,
-        sent: cursorIndex,
-        total: session.totalTargets,
+        sent: session.rangeStart + cursorIndex,
+        total: session.rangeEnd,
       );
     } catch (_) {}
 

@@ -34,11 +34,29 @@ class AuthService {
     required String password,
     String? fullName,
   }) async {
+    // Check email uniqueness via database function before signing up.
+    // Supabase silently handles duplicate emails differently depending on
+    // confirmation settings, so we query auth.users directly.
+    try {
+      final exists = await _client
+          .rpc('check_email_exists', params: {'email_to_check': email});
+      if (exists == true) {
+        throw AuthException(
+          'A user with this email address has already been registered',
+        );
+      }
+    } catch (e) {
+      if (e is AuthException) rethrow;
+      // If the function doesn't exist yet, fall through and let signUp proceed
+      debugPrint('[AuthService] check_email_exists RPC failed: $e');
+    }
+
     final response = await _client.auth.signUp(
       email: email,
       password: password,
       data: {'full_name': fullName ?? ''},
     );
+
     // If Supabase has email confirmation disabled, user gets a session immediately
     if (response.session != null) {
       _status = AuthStatus.authenticated;

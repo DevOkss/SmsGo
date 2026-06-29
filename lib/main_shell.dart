@@ -11,6 +11,8 @@ import 'features/messaging/messaging_screen.dart';
 import 'features/notes/note_screen.dart';
 import 'features/settings/setting_screen.dart';
 import 'providers/update_provider.dart';
+import 'features/settings/widgets/update_dialog.dart';
+import 'features/settings/widgets/download_progress_widget.dart';
 import 'services/sms_import_gateway.dart';
 import 'services/native_sms_import_controller.dart';
 import 'core/widgets/license_enforcement_banner.dart';
@@ -55,7 +57,15 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     if (state != AppLifecycleState.resumed) return;
 
     if (mounted) {
-      context.read<UpdateProvider>().checkForUpdate();
+      final provider = context.read<UpdateProvider>();
+      await provider.checkForUpdate();
+      if (provider.isUpdateAvailable && provider.latestRelease != null && mounted) {
+        final shouldUpdate = await UpdateDialog.show(context, provider.latestRelease!) ?? false;
+        if (shouldUpdate && mounted) {
+          DownloadProgressWidget.show(context);
+          await provider.downloadAndInstall();
+        }
+      }
     }
 
     if (!Platform.isAndroid) return;

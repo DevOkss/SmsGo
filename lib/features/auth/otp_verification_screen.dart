@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_theme.dart';
 import '../../core/constants/error_utils.dart';
 import '../../providers/auth_provider.dart';
+import 'auth_gate.dart';
 import 'login_screen.dart';
 import 'reset_password_screen.dart';
 
@@ -115,9 +116,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           context,
           MaterialPageRoute(builder: (_) => const ResetPasswordScreen()),
         );
+      } else if (widget.type == 'signup') {
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthGate()),
+          (route) => false,
+        );
       }
-      // Signup: AuthProvider listener fires → status becomes authenticated
-      // → AuthGate rebuilds and routes to LicenseGate automatically.
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -208,46 +213,53 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                 const SizedBox(height: 32),
 
                 // OTP input boxes
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(_otpLength, (index) {
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          right: index < _otpLength - 1 ? 10 : 0,
-                        ),
-                        child: AspectRatio(
-                          aspectRatio: 0.7,
-                          child: RawKeyboardListener(
-                            focusNode: FocusNode(),
-                            onKey: (event) => _onKeyEvent(index, event),
-                            child: TextField(
-                              controller: _controllers[index],
-                              focusNode: _focusNodes[index],
-                              textAlign: TextAlign.center,
-                              keyboardType: TextInputType.number,
-                              maxLength: 1,
-                              style: theme.textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                              decoration: InputDecoration(
-                                counterText: '',
-                                contentPadding: EdgeInsets.zero,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final spacing = 10.0;
+                    final totalSpacing = spacing * (_otpLength - 1);
+                    final calculatedWidth = (constraints.maxWidth - totalSpacing) / _otpLength;
+                    final boxWidth = calculatedWidth.clamp(30.0, 50.0);
+                    final boxHeight = boxWidth * 0.7;
+
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_otpLength, (index) {
+                        return [
+                          if (index > 0) SizedBox(width: spacing),
+                          SizedBox(
+                            width: boxWidth,
+                            height: boxHeight,
+                            child: RawKeyboardListener(
+                              focusNode: FocusNode(),
+                              onKey: (event) => _onKeyEvent(index, event),
+                              child: TextField(
+                                controller: _controllers[index],
+                                focusNode: _focusNodes[index],
+                                textAlign: TextAlign.center,
+                                keyboardType: TextInputType.number,
+                                maxLength: 1,
+                                style: theme.textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
                                 ),
+                                decoration: InputDecoration(
+                                  counterText: '',
+                                  contentPadding: EdgeInsets.zero,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                onChanged: (value) =>
+                                    _onOtpChanged(index, value),
                               ),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              onChanged: (value) =>
-                                  _onOtpChanged(index, value),
                             ),
                           ),
-                        ),
-                      ),
+                        ];
+                      }).expand((e) => e).toList(),
                     );
-                  }),
+                  },
                 ),
                 const SizedBox(height: 28),
 

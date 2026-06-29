@@ -44,7 +44,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
     try {
       final provider = context.read<UpdateProvider>();
-      await provider.checkForUpdate();
+      await provider.checkForUpdate(force: true);
 
       if (!mounted) return;
 

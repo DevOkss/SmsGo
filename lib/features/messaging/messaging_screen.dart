@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_theme.dart';
+import '../../core/constants/phone_utils.dart';
 import '../../core/widget/app_widgets.dart';
 import '../../models/campaign.dart';
 import '../../models/monitor_number.dart';
@@ -1038,9 +1039,13 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
                   final leadName = leads.isNotEmpty ? (leads.first.name ?? '') : '';
                   testMessage = testMessage.replaceAll('{username}', leadName);
 
-                  // Break links based on mode
+                  // Break links based on mode and receiver network
                   if (_breakLinkMode != 'none') {
-                    testMessage = breakLinksInMessage(testMessage);
+                    final receiverNetwork = PhoneUtils.detectNetwork(number);
+                    final shouldBreak = _breakLinkMode == 'All' || receiverNetwork == AppConstants.networkGlobe;
+                    if (shouldBreak) {
+                      testMessage = breakLinksInMessage(testMessage);
+                    }
                   }
 
                   // Create conversation (session_id=null) and outgoing message record
@@ -1136,6 +1141,19 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
 
     setState(() => _saving = true);
     try {
+      final progressNotifier = ValueNotifier(0.0);
+      final statusNotifier = ValueNotifier('Preparing...');
+
+      // ignore: use_build_context_synchronously
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _SendingProgressDialog(
+          progressNotifier: progressNotifier,
+          statusNotifier: statusNotifier,
+        ),
+      );
+
       await context.read<MessagingProvider>().startSending(
         campaign: widget.campaign,
         simSlot: _simSlot,
@@ -1152,10 +1170,15 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
         rangeStart: _rangeStart,
         rangeEnd: _rangeEnd,
         breakLinkMode: _breakLinkMode,
+        onSendingProgress: (progress, status) {
+          progressNotifier.value = progress;
+          statusNotifier.value = status;
+        },
       );
 
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context); // dismiss loading dialog
+        Navigator.pop(context); // back to messaging screen
         widget.onStarted();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Bulk send started!'), backgroundColor: AppColors.success),
@@ -1163,6 +1186,7 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // dismiss loading dialog
         final msg = e.toString().replaceAll('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg), backgroundColor: AppColors.error),
@@ -1171,6 +1195,56 @@ class _SendSetupScreenState extends State<SendSetupScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+}
+
+class _SendingProgressDialog extends StatelessWidget {
+  final ValueNotifier<double> progressNotifier;
+  final ValueNotifier<String> statusNotifier;
+
+  const _SendingProgressDialog({
+    required this.progressNotifier,
+    required this.statusNotifier,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      content: SizedBox(
+        height: 140,
+        child: ValueListenableBuilder<double>(
+          valueListenable: progressNotifier,
+          builder: (_, progress, _) {
+            final pct = (progress * 100).toInt();
+            return ValueListenableBuilder<String>(
+              valueListenable: statusNotifier,
+              builder: (_, status, _) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(status),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: progress > 0 ? progress : null,
+                      backgroundColor: Colors.grey.shade200,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$pct%',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
   }
 }
 
